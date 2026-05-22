@@ -1,0 +1,353 @@
+from __future__ import annotations
+
+import numpy as np
+
+from ._results import EDEFExplanation
+
+
+def _require_treeig():
+    try:
+        from treeig import TreeIG
+    except ImportError as exc:
+        raise ImportError(
+            "TreeExplainer requires treeig. Install with: pip install treeig"
+        ) from exc
+    return TreeIG
+
+
+def _squared_error_loss(y, pred):
+    return (y - pred) ** 2
+
+
+def _sigmoid(z):
+    z = np.asarray(z, dtype=float)
+    return 1.0 / (1.0 + np.exp(-z))
+
+
+def _binary_log_loss(y, p):
+    p = np.clip(p, 1e-12, 1.0 - 1e-12)
+    return -(y * np.log(p) + (1.0 - y) * np.log1p(-p))
+
+
+def _logsumexp_1d(z):
+    z = np.asarray(z, dtype=float)
+    zmax = np.max(z)
+    return zmax + np.log(np.sum(np.exp(z - zmax)))
+
+
+def _multiclass_log_loss_one(y_i, scores):
+    return _logsumexp_1d(scores) - scores[int(y_i)]
+
+
+class TreeExplainer:
+    """
+    EDEF explainer for tree models using TreeIG path traces.
+
+    Supports:
+    - tree regression with squared-error loss;
+    - binary additive-score classification with log loss;
+    - multiclass additive-score classification with softmax log loss.
+    """
+
+    def __init__(
+        self,
+        model,
+        baseline,
+        *,
+        loss: str = "squared_error",
+        feature_names=None,
+        target=None,
+        time_tol: float = 1e-10,
+    ):
+        if loss not in {"squared_error", "log_loss", "multiclass_log_loss"}:
+            raise ValueError(
+                "TreeExplainer supports squared_error, log_loss, "
+                "and multiclass_log_loss."
+            )
+
+        TreeIG = _require_treeig()
+
+        self.model = model
+        self.baseline = baseline
+        self.loss = loss
+        self.feature_names = feature_names
+        self.target = target
+        self.time_tol = time_tol
+        self._TreeIG = TreeIG
+        
+        if loss == "multiclass_log_loss":
+            self._treeig = None
+        else:
+            self._treeig = TreeIG(
+                model,
+                baseline=baseline,
+                target=target,
+                time_tol=time_tol,
+            )
+
+    def __call__(
+        self,
+        X,
+        y,
+        *,
+        feature_names=None,
+        check_additivity: bool = True,
+        atol: float = 1e-8,
+    ) -> EDEFExplanation:
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y).reshape(-1)
+
+        if X.ndim != 2:
+            raise ValueError("X must have shape (n_obs, n_features).")
+
+        n_obs, n_features = X.shape
+
+        if y.shape[0] != n_obs:
+            raise ValueError("y and X must have the same number of observations.")
+
+        if n_obs < 2:
+            raise ValueError("At least two observations are required.")
+
+        if not np.all(np.isfinite(X)):
+            raise ValueError("X must contain only finite values.")
+
+        if not np.all(np.isfinite(y.astype(float))):
+            raise ValueError("y must contain only finite values.")
+
+        if self.loss == "multiclass_log_loss":
+            return self._call_multiclass_log_loss(
+                X,
+                y,
+                feature_names=feature_names,
+                check_additivity=check_additivity,
+                atol=atol,
+            )
+
+        y = y.astype(float)
+
+        if self.loss == "log_loss":
+            if not np.all((y == 0.0) | (y == 1.0)):
+                raise ValueError("y must contain only binary labels in {0, 1}.")
+
+        names = feature_names
+        if names is None:
+            names = self.feature_names
+        if names is None:
+            names = [f"x{i}" for i in range(n_features)]
+        else:
+            names = list(names)
+            if len(names) != n_features:
+                raise ValueError("feature_names must have length n_features.")
+
+        trace = self._treeig.trace(X, target=self.target)
+
+        counts = trace["counts"]
+        features = trace["features"]
+        jumps = trace["jumps"]
+        baseline_prediction = trace["baseline_prediction"]
+        endpoint_prediction = trace["endpoint_prediction"]
+
+        observation_values = np.zeros((n_obs, n_features), dtype=float)
+
+        for i in range(n_obs):
+            pred_before = float(baseline_prediction)
+            n_events = int(counts[i])
+
+            for k in range(n_events):
+                j = int(features[i, k])
+                jump = float(jumps[i, k])
+
+                pred_after = pred_before + jump
+
+                if self.loss == "squared_error":
+                    contribution = (
+                        _squared_error_loss(y[i], pred_before)
+                        - _squared_error_loss(y[i], pred_after)
+                    )
+                else:
+                    p_before = _sigmoid(pred_before)
+                    p_after = _sigmoid(pred_after)
+                    contribution = (
+                        _binary_log_loss(y[i], p_before)
+                        - _binary_log_loss(y[i], p_after)
+                    )
+
+                if j >= 0:
+                    observation_values[i, j] += contribution
+
+                pred_before = pred_after
+
+        values = observation_values.mean(axis=0)
+        standard_errors = observation_values.std(axis=0, ddof=1) / np.sqrt(n_obs)
+
+        if self.loss == "squared_error":
+            baseline_loss = float(np.mean(_squared_error_loss(y, baseline_prediction)))
+            model_loss = float(np.mean(_squared_error_loss(y, endpoint_prediction)))
+            model_type = "tree_regression"
+        else:
+            baseline_loss = float(
+                np.mean(_binary_log_loss(y, _sigmoid(baseline_prediction)))
+            )
+            model_loss = float(
+                np.mean(_binary_log_loss(y, _sigmoid(endpoint_prediction)))
+            )
+            model_type = "tree_classification"
+
+        total = baseline_loss - model_loss
+        additivity_error = values.sum() - total
+
+        if check_additivity and abs(additivity_error) > atol:
+            raise RuntimeError(
+                "EDEF contributions do not add to total fit improvement. "
+                f"Additivity error: {additivity_error}"
+            )
+
+        return EDEFExplanation(
+            values=values,
+            observation_values=observation_values,
+            standard_errors=standard_errors,
+            total=total,
+            baseline_loss=baseline_loss,
+            model_loss=model_loss,
+            loss=self.loss,
+            model_type=model_type,
+            feature_names=names,
+            n_obs=n_obs,
+            additivity_error=additivity_error,
+        )
+
+    def _call_multiclass_log_loss(
+        self,
+        X,
+        y,
+        *,
+        feature_names=None,
+        check_additivity: bool = True,
+        atol: float = 1e-8,
+    ) -> EDEFExplanation:
+        y = np.asarray(y).reshape(-1)
+        X = np.asarray(X, dtype=float)
+
+        if X.ndim != 2:
+            raise ValueError("X must have shape (n_obs, n_features).")
+
+        n_obs, n_features = X.shape
+
+        if y.shape[0] != n_obs:
+            raise ValueError("y and X must have the same number of observations.")
+
+        if not np.all(np.equal(y, np.round(y))):
+            raise ValueError("y must contain integer class labels.")
+
+        y = y.astype(int)
+
+        if np.any(y < 0):
+            raise ValueError("y must contain nonnegative class labels.")
+
+        n_classes = int(np.max(y)) + 1
+
+        if n_classes < 2:
+            raise ValueError("multiclass_log_loss requires at least two classes.")
+
+        names = feature_names
+        if names is None:
+            names = self.feature_names
+        if names is None:
+            names = [f"x{i}" for i in range(n_features)]
+        else:
+            names = list(names)
+            if len(names) != n_features:
+                raise ValueError("feature_names must have length n_features.")
+
+        traces = []
+        baseline_scores = np.zeros(n_classes, dtype=float)
+        endpoint_scores = np.zeros((n_obs, n_classes), dtype=float)
+
+        for k in range(n_classes):
+            treeig_k = self._TreeIG(
+                self.model,
+                baseline=self.baseline,
+                target=k,
+                time_tol=self.time_tol,
+            )
+            trace_k = treeig_k.trace(X, target=k)
+            traces.append(trace_k)
+            baseline_scores[k] = float(trace_k["baseline_prediction"])
+            endpoint_scores[:, k] = np.asarray(
+                trace_k["endpoint_prediction"],
+                dtype=float,
+            )
+
+        observation_values = np.zeros((n_obs, n_features), dtype=float)
+
+        for i in range(n_obs):
+            current_scores = baseline_scores.copy()
+            events = []
+
+            for k in range(n_classes):
+                trace_k = traces[k]
+                n_events = int(trace_k["counts"][i])
+
+                for m in range(n_events):
+                    events.append(
+                        (
+                            float(trace_k["times"][i, m]),
+                            k,
+                            int(trace_k["features"][i, m]),
+                            float(trace_k["jumps"][i, m]),
+                        )
+                    )
+
+            events.sort(key=lambda item: (item[0], item[1], item[2]))
+
+            for _, class_index, feature_index, jump in events:
+                before_loss = _multiclass_log_loss_one(y[i], current_scores)
+                current_scores[class_index] += jump
+                after_loss = _multiclass_log_loss_one(y[i], current_scores)
+
+                contribution = before_loss - after_loss
+
+                if feature_index >= 0:
+                    observation_values[i, feature_index] += contribution
+
+        values = observation_values.mean(axis=0)
+        standard_errors = observation_values.std(axis=0, ddof=1) / np.sqrt(n_obs)
+
+        baseline_losses = np.array(
+            [_multiclass_log_loss_one(y_i, baseline_scores) for y_i in y],
+            dtype=float,
+        )
+
+        model_losses = np.array(
+            [
+                _multiclass_log_loss_one(y[i], endpoint_scores[i])
+                for i in range(n_obs)
+            ],
+            dtype=float,
+        )
+
+        baseline_loss = float(np.mean(baseline_losses))
+        model_loss = float(np.mean(model_losses))
+        total = baseline_loss - model_loss
+
+        additivity_error = values.sum() - total
+
+        if check_additivity and abs(additivity_error) > atol:
+            raise RuntimeError(
+                "EDEF contributions do not add to total fit improvement. "
+                f"Additivity error: {additivity_error}"
+            )
+
+        return EDEFExplanation(
+            values=values,
+            observation_values=observation_values,
+            standard_errors=standard_errors,
+            total=total,
+            baseline_loss=baseline_loss,
+            model_loss=model_loss,
+            loss="multiclass_log_loss",
+            model_type="tree_multiclass_classification",
+            feature_names=names,
+            n_obs=n_obs,
+            additivity_error=additivity_error,
+        )

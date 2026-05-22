@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "edef"
+version = "0.0.1"
+description = "Euler Decomposition of Explained Fit"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.optional-dependencies]
+torch = ["torch"]
+dev = ["pytest", "scikit-learn"]
+all = ["torch", "pytest", "scikit-learn"]
