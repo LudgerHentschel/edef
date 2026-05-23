@@ -5,18 +5,26 @@ performance into additive feature contributions.
 
 For each observation, EDEF returns feature attributions $\phi_j$ satisfying
 
-$$\sum_j \phi_j = \mathcal{L}(y,\, \hat{y}(x_0)) - \mathcal{L}(y,\, \hat{y}(x)),$$
+$$\sum_j \phi_j = \mathcal{L}(y,\, f(x_0)) - \mathcal{L}(y,\, f(x)),$$
 
-where $\mathcal{L}$ is the prediction loss, $x_0$ is a baseline input, and $x$
-is the observation. A positive contribution means the feature improved realized
-predictive fit relative to the baseline.
+where $\mathcal{L}$ is the prediction loss, $x_0$ is a baseline input, $x$ is
+the observation, and $f(x)$ is the prediction function evaluated at $x$.
+A positive contribution means the feature improved realized predictive fit
+relative to the baseline.
 
 Standard attribution methods explain predictions. EDEF explains whether those
 predictions were accurate.
 
+EDEF applies the integrated-gradients framework of Sundararajan, Taly, and
+Yan (2017) to the loss function rather than the prediction, and thereby
+inherits the axiomatic properties of IG — implementation invariance,
+completeness, linearity, and the dummy axiom — while attributing realized
+predictive fit rather than predicted values.
+
 ## Using EDEF
 
-EDEF follows a familiar explainer pattern:
+Although EDEF attributes model fit instead of predictions, it follows a
+familiar explainer pattern:
 
 ```python
 explainer = edef.LinearExplainer(model, feature_names=["x1", "x2", "x3"])
@@ -70,30 +78,28 @@ $$x(t) = x_0 + t \cdot (x - x_0), \qquad 0 \le t \le 1,$$
 
 the loss reduction from baseline to observation is
 
-$$\mathcal{L}(y, \hat{y}(x_0)) - \mathcal{L}(y, \hat{y}(x))
-= -\int_0^1 \frac{d}{dt}\,\mathcal{L}(y, \hat{y}(x(t)))\,dt.$$
+$$\mathcal{L}(y, f(x_0)) - \mathcal{L}(y, f(x))
+= -\int_0^1 \frac{d}{dt}\,\mathcal{L}(y, f(x(t)))\,dt.$$
 
 By the chain rule this integral decomposes additively across features:
 
 $$\phi_j = (x_j - x_{0,j}) \int_0^1
-\left[-\frac{\partial \mathcal{L}}{\partial \hat{y}} \cdot
-\frac{\partial \hat{y}}{\partial x_j}\bigg|_{x(t)}\right] dt.$$
+\left[-\frac{\partial \mathcal{L}}{\partial f} \cdot
+\frac{\partial f}{\partial x_j}\bigg|_{x(t)}\right] dt.$$
 
-The integrand is the prediction gradient $\partial \hat{y}/\partial x_j$
-multiplied by the loss gradient $\partial \mathcal{L}/\partial \hat{y}$.
-This chain-rule factor is what distinguishes EDEF from Integrated Gradients,
-which integrates only the prediction gradient. For squared-error loss,
-$\partial \mathcal{L}/\partial \hat{y} = -2(y - \hat{y}(x(t)))$, so EDEF
-weights the prediction gradient by how wrong the prediction is at each point
-along the path. Features that move predictions toward the truth accumulate
-positive contributions; features that move predictions away accumulate
-negative contributions.
+The integrand is the prediction gradient $\partial f/\partial x_j$ multiplied
+by the loss gradient $\partial \mathcal{L}/\partial f$. This chain-rule factor
+is what distinguishes EDEF from Integrated Gradients, which integrates only the
+prediction gradient. For squared-error loss,
+$\partial \mathcal{L}/\partial f = -2(y - f(x(t)))$, so EDEF weights the
+prediction gradient by how wrong the prediction is at each point along the
+path. Features that move predictions toward the truth accumulate positive
+contributions; features that move predictions away accumulate negative
+contributions.
 
 This integral is computed differently for each model class:
 
-- **Linear models.** The integral has a closed form. For regression,
-  $\phi_j = \beta_j(x_j - x_{0,j}) \cdot (2\bar{y} - \bar{y}_{\text{pred}})$
-  in centered coordinates. No quadrature is needed.
+- **Linear models.** The integral has a closed form. No quadrature is needed.
 
 - **Tree models.** Via TreeIG, the path trace gives the exact sequence of
   split crossings and prediction jumps along $x(t)$. At each crossing, the
@@ -107,6 +113,32 @@ This integral is computed differently for each model class:
 - **Black-box sklearn models.** Finite-difference approximations to the loss
   gradient replace automatic differentiation; Gauss-Legendre quadrature
   integrates over $t$.
+
+## Speed
+
+The fundamental cost difference between EDEF and its competitors is that EDEF's cost is independent of the number of features $p$. Permutation and SAGE must answer "what if feature $j$ were absent?" for every feature separately, so their cost scales with the number of features $p$. EDEF follows a single path from $x_0$ to $x$ and integrates gradients along it in $S$ passes, with $S$ fixed regardless of how many features the model has. For linear models the integral is closed form; for tree models it is exact via TreeIG path traces; for PyTorch and black-box models, $S$ is typically 32–64.
+
+The table counts full-dataset forward passes as the cost unit. $S$ is the number of quadrature steps; $R$ is the number of permutation repetitions per feature; $T$ is the number of SAGE coalition samples; $B$ is the background set size.
+
+| Method | Forward passes | $p=100$, $n=10{,}000$ | $p=1{,}000$, $n=10{,}000$ |
+|:---|:---|---:|---:|
+| EDEF | $S$ (independent of $p$) | 50 | 50 |
+| Permutation ($R=10$) | $R \cdot p$ | 1,000 | 10,000 |
+| SAGE ($T=512$, $B=128$) | $T \cdot B \cdot p$ | 6,500,000 | 65,000,000 |
+
+At $p=1{,}000$, EDEF requires 200 times fewer passes than permutation and over
+a million times fewer than SAGE. The gap widens with $p$.
+
+Forward-pass counts understate the practical wall-clock advantage because
+EDEF's passes are fully vectorized over observations while permutation and
+SAGE run sequentially across features and coalition samples. See the timing
+notebook and the accompanying paper for wall-clock comparisons.
+
+For linear models, EDEF is closed form and requires no model evaluations at
+all. For tree models and PyTorch models, wall-clock times are similar: the
+dominant cost for tree models is the TreeIG path traversal rather than model
+forward passes, and both complete attribution for thousands of observations on
+a typical model in well under a second.
 
 ## Statistical inference
 
@@ -127,7 +159,7 @@ across resampled evaluation sets. In settings where prediction accuracy is
 itself the quantity of scientific interest — rather than a prediction to be
 explained — these inferential outputs are as important as the point estimates.
 
-## Relation to SHAP, Integrated Gradients, and SAGE
+## Relation to other methods
 
 SHAP and Integrated Gradients explain predictions. EDEF and SAGE explain
 realized model fit. These are fundamentally different attribution targets.
@@ -138,9 +170,32 @@ realized model fit. These are fundamentally different attribution targets.
 **EDEF and SAGE** ask:
 > "How much does feature $j$ contribute to realized predictive accuracy?"
 
+The table below positions EDEF against the main alternatives along six
+dimensions. The columns record what each method attributes; whether the method
+holds the model fixed at realized inputs or evaluates it at counterfactual
+ones; scope (local per-observation, aggregated-local, or global); whether
+natural standard errors are available without resampling; and the process by
+which importance is allocated.
+
+| Method | Attributes | Model fixed | Realized inputs only | Scope | Nat. SEs | Process |
+|:---|:---|:---:|:---:|:---|:---:|:---|
+| Coefficients | Prediction / score | ✓ | ✓ | Global | — | Local sensitivity |
+| Integrated Gradients | Prediction | ✓ | — | Local | — | Continuous path |
+| SHAP | Prediction | — | — | Local, aggregated | — | Discrete averaging |
+| Permutation / perturbation | Accuracy | — | — | Global | — | Discrete removal |
+| SAGE | Accuracy | — | — | Global | — | Discrete averaging |
+| **EDEF** | **Accuracy** | **✓** | **✓** | **Global** | **✓** | **Continuous path** |
+
+*Model fixed*: the method conditions on the deployed model at realized inputs,
+without counterfactual feature removal, marginalization, or perturbation.
+*Realized inputs only*: the model is evaluated only at inputs derivable as
+convex combinations of actual observations, requiring no synthetic inputs.
+*Nat. SEs*: standard errors reflecting sampling variation, not Monte Carlo
+approximation error.
+
 ### Integrated Gradients
 
-Integrated Gradients computes $\phi_j = (x_j - x_{0,j}) \int_0^1 \partial \hat{y}/\partial x_j\big|_{x(t)}\,dt$ — the integral of the prediction gradient along the path from $x_0$ to $x$. EDEF computes the integral of the loss gradient along the same path. They share a path, a baseline, and an integration method. They differ in exactly one thing: what is integrated.
+Integrated Gradients computes $\phi_j = (x_j - x_{0,j}) \int_0^1 \partial f/\partial x_j \big|_{x(t)}\,dt$ — the integral of the prediction gradient along the path from $x_0$ to $x$. EDEF computes the integral of the loss gradient along the same path. They share a path, a baseline, and an integration method. They differ in exactly one thing: what is integrated.
 
 That difference in the integrand is the full story. IG measures how much each
 feature moved the prediction as we interpolate from baseline to observation.
@@ -168,6 +223,37 @@ baseline, and the same discrete inclusion/exclusion logic apply whether the
 model generalizes well or poorly. This makes SHAP a precise tool for
 explaining the model's behavior in input space, and an imprecise tool for
 evaluating that behavior against realized outcomes.
+
+### Permutation and perturbation methods
+
+Permutation importance — available in scikit-learn as `permutation_importance`,
+and implemented in various forms across the model-evaluation literature —
+measures how much model accuracy declines when a feature is shuffled or
+removed. The question asked is: "how much does the model rely on feature $j$?"
+
+Like SAGE and EDEF, permutation methods assess predictive accuracy rather than
+predictions. The construction differs from EDEF in three ways.
+
+First, permutation methods evaluate the model at counterfactual inputs.
+Shuffling feature $j$ creates (feature, outcome) pairs that never occurred
+in the data. Whether those pairs are meaningful depends on the joint
+distribution of features; correlation with other features means the shuffled
+inputs may fall far outside the model's training support. EDEF evaluates the
+model only at convex combinations of two real inputs — no synthetic feature
+combinations are introduced.
+
+Second, permutation methods produce a single importance score per feature
+with no natural observation-level decomposition. Standard errors, when
+reported, reflect Monte Carlo variance across permutation draws — not the
+sampling variation across observations that EDEF's standard errors capture.
+
+Third, permutation importance answers a counterfactual question about feature
+removal: "how much worse would accuracy be if the model could not see feature
+$j$?" EDEF answers a realized question about feature contribution: "how much
+did feature $j$ contribute to accuracy on these observations, given the
+predictions the model actually made?" The two questions have the same answer
+for independent features in large samples and can diverge substantially when
+features are correlated or when model accuracy varies across the sample.
 
 ### SAGE
 
@@ -200,7 +286,7 @@ and can be expensive for large models.
 ## Available explainers
 
 | Explainer | Intended models | Method |
-|---|---|---|
+|:---|:---|:---|
 | `LinearExplainer` | Linear and generalized linear models | Closed-form exact decomposition |
 | `TorchExplainer` | PyTorch neural networks | Autograd + Gauss-Legendre quadrature |
 | `TreeExplainer` | Tree ensembles | Exact TreeIG path traces |
@@ -367,7 +453,7 @@ features to named groups; features sharing a label are summed. This is
 useful for one-hot encoded variables, embedding blocks, factor groups, and
 hierarchical feature structures.
 
-## Statistical inference
+## Accessing results
 
 ```python
 result.values            # feature contributions (point estimates)
@@ -456,6 +542,16 @@ SAGE:
   "Understanding Global Feature Contributions With Additive Importance
   Measures."
   *NeurIPS.*
+
+Permutation importance:
+
+- Breiman, Leo. 2001.
+  "Random Forests."
+  *Machine Learning* 45(1): 5–32.
+
+- Louppe, Gilles, Louis Wehenkel, Antonio Sutera, and Pierre Geurts. 2013.
+  "Understanding Variable Importances in Forests of Randomized Trees."
+  *Advances in Neural Information Processing Systems (NeurIPS).*
 
 ## License
 
