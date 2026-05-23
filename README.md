@@ -110,7 +110,7 @@ By the chain rule this integral decomposes additively across features:
 
 $$\phi_j = (x_j - x_{0,j}) \int_0^1
 \left[-\frac{\partial \mathcal{L}}{\partial f} \cdot
-\frac{\partial f(x(t))}{\partial x_j}\right] dt.$$
+\frac{\partial f}{\partial x_j}\Bigg|_{x(t)}\right] dt.$$
 
 The integrand is the prediction gradient $\partial f/\partial x_j$ multiplied
 by the loss gradient $\partial \mathcal{L}/\partial f$. This chain-rule factor
