@@ -118,6 +118,17 @@ TreeSHAP provides for SHAP. EDEF instead exploits additive path decompositions
 directly, yielding exact and computationally efficient realized-fit
 attributions for many important model classes.
 
+## Available explainers
+
+EDEF currently provides four explainer families:
+
+| Explainer | Intended models | Method |
+|---|---|---|
+| `LinearExplainer` | Linear and generalized linear models | Closed-form exact decomposition |
+| `TorchExplainer` | PyTorch neural networks | Automatic differentiation + path integration |
+| `TreeExplainer` | Tree ensembles | Exact TreeIG path traces |
+| `NumericalExplainer` | Black-box sklearn-style models | Numerical loss-gradient integration |
+
 ## Supported models
 
 ### Linear models
@@ -139,6 +150,13 @@ attributions for many important model classes.
 - Multiclass additive-score classification
 
 Tree classification uses raw margins/logits rather than probabilities.
+
+### Numerical black-box models
+
+- Regression models with `predict(X)`
+- Binary classifiers with `predict_proba(X)`
+- Multiclass classifiers with `predict_proba(X)`
+- sklearn MLP models via `NumericalExplainer`
 
 ## Not currently supported
 
@@ -296,6 +314,82 @@ print(result)
 For multiclass tree models, EDEF computes exact softmax log-loss decompositions
 using TreeIG path traces across all class margins.
 
+## Quickstart: NumericalExplainer with sklearn MLP
+
+`NumericalExplainer` provides EDEF for smooth black-box models that expose
+standard sklearn-style prediction methods.
+
+This is especially useful for:
+- `MLPRegressor`
+- `MLPClassifier`
+- sklearn pipelines
+- models without automatic differentiation support
+
+For regression, `NumericalExplainer` uses `predict(X)` and decomposes realized
+squared-error improvement.
+
+```python
+import numpy as np
+from sklearn.neural_network import MLPRegressor
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+
+import edef
+
+rng = np.random.default_rng(123)
+
+X = rng.normal(size=(400, 3))
+
+y = (
+    1.0 * X[:, 0]
+    + 0.75 * X[:, 1] ** 2
+    + rng.normal(scale=0.25, size=400)
+)
+
+model = make_pipeline(
+    StandardScaler(),
+    MLPRegressor(
+        hidden_layer_sizes=(12,),
+        activation="tanh",
+        alpha=1e-4,
+        max_iter=2000,
+        random_state=0,
+    ),
+)
+
+model.fit(X, y)
+
+explainer = edef.NumericalExplainer(
+    model,
+    baseline=X.mean(axis=0),
+    loss="squared_error",
+    n_steps=32,
+    step_size=1e-4,
+    feature_names=["x1_linear", "x2_nonlinear", "x3_noise"],
+)
+
+result = explainer(X, y)
+
+print(result)
+```
+
+Typical output:
+
+```text
+Feature contributions
+---------------------
+         x1_linear  edef= 1.006465  se= 0.118972  t= 8.460  share= 0.372
+      x2_nonlinear  edef= 1.706453  se= 0.229947  t= 7.421  share= 0.631
+          x3_noise  edef=-0.007177  se= 0.002685  t=-2.672  share=-0.003
+```
+
+For classification, `NumericalExplainer` uses `predict_proba(X)` and
+decomposes realized log-loss improvement.
+
+Internally, `NumericalExplainer` computes finite-difference approximations to
+loss gradients and integrates them along the straight-line path from the
+baseline input to each observation.
+
 ## Grouped contributions
 
 Feature contributions can be grouped after estimation.
@@ -435,6 +529,7 @@ ecosystem:
 - PyTorch gradient-based EDEF for regression, binary classification, and multiclass classification;
 - exact tree-model EDEF via TreeIG;
 - multiclass log-loss EDEF;
+- numerical-gradient EDEF for sklearn-style black-box models;
 - grouped contributions;
 - statistical inference and standard errors;
 - SHAP-compatible plotting adapters.
