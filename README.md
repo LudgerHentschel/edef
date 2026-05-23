@@ -207,7 +207,7 @@ which importance is allocated.
 | Coefficients | Prediction / score | ✓ | ✓ | Global | — | Local sensitivity |
 | Integrated Gradients | Prediction | ✓ | — | Local | — | Continuous path |
 | SHAP | Prediction | — | — | Local, aggregated | — | Discrete averaging |
-| Permutation / perturbation | Accuracy | — | — | Global | — | Discrete removal |
+| Permutation / perturbation | Accuracy/Prediction | — | — | Global | — | Discrete removal |
 | SAGE | Accuracy | — | — | Global | — | Discrete averaging |
 | **EDEF** | **Accuracy** | **✓** | **✓** | **Global** | **✓** | **Continuous path** |
 
@@ -256,8 +256,7 @@ and implemented in various forms across the model-evaluation literature —
 measures how much model accuracy declines when a feature is shuffled or
 removed. The question asked is: "how much does the model rely on feature $j$?"
 
-Like SAGE and EDEF, permutation methods assess predictive accuracy rather than
-predictions. The construction differs from EDEF in three ways.
+Permutation methods can target either predictive accuracy or predictions, depending on the scoring function used. The most common application — measuring the drop in model performance when a feature's values are shuffled — is a fit-based method and sits in the same camp as SAGE and EDEF. Permutation-based SHAP, by contrast, uses permutation sampling to estimate prediction attributions. The discussion below concerns the fit-based variant. It differs from EDEF in three ways.
 
 First, permutation methods evaluate the model at counterfactual inputs.
 Shuffling feature $j$ creates (feature, outcome) pairs that never occurred
