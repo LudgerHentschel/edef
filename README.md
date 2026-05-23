@@ -10,10 +10,10 @@ Formally, EDEF computes attributions $\phi_j$ satisfying
 
 $$\sum_j \phi_j
 =
-\mathcal{L}(\widehat y(x_0)) - \mathcal{L}(\widehat y(x)),$$
+\mathcal{L}(\widehat{y}(x_0)) - \mathcal{L}(\widehat{y}(x)),$$
 
-where $\mathcal{L}(\widehat y(x_0)$ is the model loss at a baseline input $x_0$
-and $\mathcal{L}(\widehat y(x) })$ is the model loss at the observed input $x$.
+where $\mathcal{L}(\widehat{y}(x_0)$ is the model loss at a baseline input $x_0$
+and $\mathcal{L}(\widehat{y}(x))$ is the model loss at the observed input $x$.
 A larger value corresponds to better realized predictive performance.
 
 EDEF answers a different question from standard prediction-attribution methods.
