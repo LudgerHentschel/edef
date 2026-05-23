@@ -21,14 +21,36 @@ inherits the axiomatic properties of IG — implementation invariance,
 completeness, linearity, and the dummy axiom — while attributing realized
 predictive fit rather than predicted values.
 
+## Installation
+
+```bash
+pip install edef
+```
+
+Optional dependencies:
+
+```bash
+pip install torch    # for TorchExplainer
+pip install treeig   # for TreeExplainer
+pip install shap     # for SHAP plotting compatibility
+```
+
 ## Using EDEF
 
 Although EDEF attributes model fit instead of predictions, it follows a
 familiar explainer pattern:
 
 ```python
-explainer = edef.LinearExplainer(model, feature_names=["x1", "x2", "x3"])
-result = explainer(X, y)
+import numpy as np
+from sklearn.linear_model import LinearRegression
+import edef
+
+rng = np.random.default_rng(123)
+X = rng.normal(size=(200, 3))
+y = X @ np.array([1.0, 0.5, 0.0]) + rng.normal(scale=0.5, size=200)
+
+model = LinearRegression().fit(X, y)
+result = edef.LinearExplainer(model, feature_names=["x1", "x2", "x3"])(X, y)
 print(result)
 ```
 
@@ -43,6 +65,9 @@ Feature contributions
 Unlike most attribution methods, EDEF reports standard errors and t-statistics
 alongside attribution values. Features that move predictions without improving
 accuracy show up near zero.
+
+The decomposition is exact for any linear model: contributions sum to the
+realized reduction in mean squared error relative to the sample mean.
 
 ## Why EDEF?
 
@@ -331,21 +356,9 @@ Any model with `predict(X)` (regression) or `predict_proba(X)`
 - missing-value tree routing;
 - CatBoost.
 
-## Installation
+## Examples for Different Models
 
-```bash
-pip install edef
-```
-
-Optional dependencies:
-
-```bash
-pip install torch    # for TorchExplainer
-pip install treeig   # for TreeExplainer
-pip install shap     # for SHAP plotting compatibility
-```
-
-## Linear regression
+### Linear regression
 
 ```python
 import numpy as np
@@ -364,7 +377,7 @@ print(result)
 The decomposition is exact for any linear model: contributions sum to the
 realized reduction in mean squared error relative to the sample mean.
 
-## Binary classification
+### Binary classification
 
 ```python
 from sklearn.linear_model import LogisticRegression
@@ -374,7 +387,7 @@ model = LogisticRegression().fit(X, y)
 result = edef.LinearExplainer(model, loss="log_loss", feature_names=[...])(X, y)
 ```
 
-## Tree regression
+### Tree regression
 
 ```python
 from sklearn.ensemble import GradientBoostingRegressor
@@ -392,7 +405,7 @@ prediction, which changes the loss. EDEF assigns the loss change at each
 crossing to the crossing feature. The result is exact — no quadrature,
 no approximation parameters.
 
-## Tree classification
+### Tree classification
 
 ```python
 from sklearn.ensemble import GradientBoostingClassifier
@@ -407,7 +420,7 @@ For multiclass models, use `loss="multiclass_log_loss"`. EDEF merges the
 split-crossing sequences across all class-margin trees, applying exact softmax
 log-loss changes at each event.
 
-## PyTorch models
+### PyTorch models
 
 ```python
 import edef
@@ -422,7 +435,7 @@ explainer = edef.TorchExplainer(
 result = explainer(X_eval, y_eval)
 ```
 
-## Black-box sklearn models
+### Black-box sklearn models
 
 ```python
 from sklearn.neural_network import MLPRegressor
@@ -452,6 +465,7 @@ Grouped contributions preserve exact additivity. Group labels map input
 features to named groups; features sharing a label are summed. This is
 useful for one-hot encoded variables, embedding blocks, factor groups, and
 hierarchical feature structures.
+
 
 ## Accessing results
 
