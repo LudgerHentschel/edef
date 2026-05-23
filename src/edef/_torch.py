@@ -52,8 +52,11 @@ class TorchExplainer:
         dtype=None,
     ):
 
-        if loss not in {"squared_error", "log_loss"}:
-            raise ValueError("TorchExplainer supports squared_error and log_loss.")
+        if loss not in {"squared_error", "log_loss", "multiclass_log_loss"}:
+            raise ValueError(
+                "TorchExplainer supports squared_error, log_loss, and multiclass_log_loss."
+            )
+
 
         self.torch = _require_torch()
 
@@ -82,6 +85,12 @@ class TorchExplainer:
         if self.loss == "log_loss":
             if not torch.all((y_t == 0.0) | (y_t == 1.0)):
                 raise ValueError("y must contain only binary labels in {0, 1}.")
+
+        if self.loss == "multiclass_log_loss":
+            if not torch.all(y_t == torch.round(y_t)):
+                raise ValueError("y must contain integer class labels.")
+            if torch.any(y_t < 0):
+                raise ValueError("y must contain nonnegative class labels.")
 
         if X_t.ndim != 2:
             raise ValueError("X must have shape (n_obs, n_features).")
@@ -124,7 +133,7 @@ class TorchExplainer:
                 Xt = X0_t + t * delta_X
                 Xt = Xt.detach().clone().requires_grad_(True)
 
-                pred_t = self._predict_scalar(Xt)
+                pred_t = self._predict_output(Xt)
                 loss_i = self._loss_per_observation(y_t, pred_t)
 
                 grad = torch.autograd.grad(
@@ -137,8 +146,8 @@ class TorchExplainer:
                 c_t = c_t - a * delta_X * grad
 
             with torch.no_grad():
-                pred0 = self._predict_scalar(X0_t)
-                pred = self._predict_scalar(X_t)
+                pred0 = self._predict_output(X0_t)
+                pred = self._predict_output(X_t)
                 
                 baseline_loss = torch.mean(self._loss_per_observation(y_t, 
                                              pred0))
@@ -178,7 +187,13 @@ class TorchExplainer:
             baseline_loss=baseline_loss_f,
             model_loss=model_loss_f,
             loss=self.loss,
-            model_type="torch_regression" if self.loss == "squared_error" else "torch_classification",
+            model_type=(
+                "torch_regression"
+                if self.loss == "squared_error"
+                else "torch_classification"
+                if self.loss == "log_loss"
+                else "torch_multiclass_classification"
+            ),
             feature_names=names,
             n_obs=n_obs,
             additivity_error=additivity_error_f,
@@ -223,19 +238,34 @@ class TorchExplainer:
 
         return b.to(device=X_t.device, dtype=X_t.dtype)
 
-    def _predict_scalar(self, X_t):
+    def _predict_output(self, X_t):
         pred = self.model(X_t)
 
-        if pred.ndim == 2 and pred.shape[1] == 1:
-            pred = pred.reshape(-1)
+        if self.loss in {"squared_error", "log_loss"}:
+            if pred.ndim == 2 and pred.shape[1] == 1:
+                pred = pred.reshape(-1)
 
-        if pred.ndim != 1:
-            raise ValueError(
-                "TorchExplainer currently requires scalar regression output "
-                "with shape (n_obs,) or (n_obs, 1)."
-            )
+            if pred.ndim != 1:
+                raise ValueError(
+                    "TorchExplainer requires scalar output with shape "
+                    "(n_obs,) or (n_obs, 1) for squared_error and log_loss."
+                )
 
-        return pred
+            return pred
+
+        if self.loss == "multiclass_log_loss":
+            if pred.ndim != 2:
+                raise ValueError(
+                    "multiclass_log_loss requires model output with shape "
+                    "(n_obs, n_classes)."
+                )
+            if pred.shape[1] < 2:
+                raise ValueError(
+                    "multiclass_log_loss requires at least two classes."
+                )
+            return pred
+
+        raise RuntimeError(f"Unexpected loss: {self.loss}")        
         
     def _loss_per_observation(self, y_t, pred_t):
         torch = self.torch
@@ -247,6 +277,14 @@ class TorchExplainer:
             return torch.nn.functional.binary_cross_entropy_with_logits(
                 pred_t,
                 y_t,
+                reduction="none",
+            )
+
+        if self.loss == "multiclass_log_loss":
+            y_long = y_t.to(dtype=torch.long)
+            return torch.nn.functional.cross_entropy(
+                pred_t,
+                y_long,
                 reduction="none",
             )
 

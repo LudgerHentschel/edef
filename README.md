@@ -130,6 +130,7 @@ attributions for many important model classes.
 
 - Regression
 - Binary classification
+- Multiclass classification
 
 ### Tree models (via TreeIG)
 
@@ -143,7 +144,6 @@ Tree classification uses raw margins/logits rather than probabilities.
 
 Current limitations include:
 
-- PyTorch multiclass classification;
 - probability-output tree attribution;
 - missing-value tree routing;
 - CatBoost;
@@ -432,7 +432,7 @@ release covers the dominant regression and classification models in the Python
 ecosystem:
 
 - closed-form linear regression and binary classification;
-- PyTorch gradient-based EDEF;
+- PyTorch gradient-based EDEF for regression, binary classification, and multiclass classification;
 - exact tree-model EDEF via TreeIG;
 - multiclass log-loss EDEF;
 - grouped contributions;
