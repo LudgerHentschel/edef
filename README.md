@@ -104,13 +104,13 @@ $$x(t) = x_0 + t \cdot (x - x_0), \qquad 0 \le t \le 1,$$
 the loss reduction from baseline to observation is
 
 $$\mathcal{L}(y, f(x_0)) - \mathcal{L}(y, f(x))
-= -\int_0^1 \frac{d}{dt} \mathcal{L}(y, f(x(t))) dt.$$
+= -\int_0^1 \frac{d}{dt} \mathcal{L}(y, f(x(t))) \quad dt.$$
 
 By the chain rule this integral decomposes additively across features:
 
 $$\phi_j = (x_j - x_{0,j}) \int_0^1
 \left[-\frac{\partial \mathcal{L}}{\partial f} \cdot
-\frac{\partial f}{\partial x_j}\Bigg|_{x(t)}\right] dt.$$
+\frac{\partial f}{\partial x_j}\Bigg{|}_{x(t)}\right] dt.$$
 
 The integrand is the prediction gradient $\partial f/\partial x_j$ multiplied
 by the loss gradient $\partial \mathcal{L}/\partial f$. This chain-rule factor
