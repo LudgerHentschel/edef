@@ -8,9 +8,7 @@ For classification, EDEF decomposes improvements in realized log loss.
 
 Formally, EDEF computes attributions $\phi_j$ satisfying
 
-$$\sum_j \phi_j
-=
-\mathcal{L}(\widehat{y}(x_0)) - \mathcal{L}(\widehat{y}(x)),$$
+$$\sum_j \phi_j = \mathcal{L}(\widehat{y}(x_0)) - \mathcal{L}(\widehat{y}(x)),$$
 
 where $\mathcal{L}(\widehat{y}(x_0)$ is the model loss at a baseline input $x_0$
 and $\mathcal{L}(\widehat{y}(x))$ is the model loss at the observed input $x$.
