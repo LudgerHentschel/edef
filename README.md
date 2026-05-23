@@ -17,7 +17,7 @@ predictions were accurate.
 
 EDEF applies the integrated-gradients framework of Sundararajan, Taly, and
 Yan (2017) to the loss function rather than the prediction, and thereby
-inherits the axiomatic properties of IG — completeness, implementation invariance, and the dummy axiom — while attributing realized
+inherits the main axiomatic properties of IG — completeness, implementation invariance, and the dummy axiom — while attributing realized
 predictive fit rather than predicted values.
 
 ## Installation
@@ -140,9 +140,9 @@ This integral is computed differently for each model class:
 
 ## Speed
 
-The fundamental cost difference between EDEF and its competitors is that EDEF's cost is independent of the number of features $p$. Permutation and SAGE must answer "what if feature $j$ were absent?" for every feature separately, so their cost scales with the number of features $p$. EDEF follows a single path from $x_0$ to $x$ and integrates gradients along it in $S$ passes, with $S$ fixed regardless of how many features the model has. For linear models the integral is closed form; for tree models it is exact via TreeIG path traces; for PyTorch and black-box models, $S$ is typically 32–64.
+The fundamental cost difference between EDEF and its competitors is that EDEF's cost is independent of the number of features $p$ for many cases because it exploits analytic or automatic gradients. Permutation and SAGE must answer "what if feature $j$ were absent?" for every feature separately, so their cost scales with the number of features $p$. EDEF follows a single path from $x_0$ to $x$ and integrates gradients along it in $S$ passes, with $S$ fixed regardless of how many features the model has. For linear models the integral is closed form; for tree models it is exact via TreeIG path traces; for PyTorch and black-box models, $S$ is typically 32–64.
 
-The table counts full-dataset forward passes as the cost unit. $S$ is the number of quadrature steps; $R$ is the number of permutation repetitions per feature; $T$ is the number of SAGE coalition samples; $B$ is the background set size.
+The table illustrates computational costs using full-dataset forward passes as the main cost unit. $S$ is the number of quadrature steps; $R$ is the number of permutation repetitions per feature; $T$ is the number of SAGE coalition samples; $B$ is the background set size.
 
 | Method | Forward passes | $p=100$, $n=10{,}000$ | $p=1{,}000$, $n=10{,}000$ |
 |:---|:---|---:|---:|
@@ -153,8 +153,8 @@ The table counts full-dataset forward passes as the cost unit. $S$ is the number
 At $p=1{,}000$, EDEF requires 200 times fewer passes than permutation and over
 a million times fewer than SAGE. The gap widens with $p$.
 
-Forward-pass counts understate the practical wall-clock advantage because
-EDEF's passes are fully vectorized over observations while permutation and
+Forward-pass counts may understate the practical wall-clock advantage because
+EDEF's passes can be fully vectorized over observations while permutation and
 SAGE run sequentially across features and coalition samples. See the timing
 notebook and the accompanying paper for wall-clock comparisons.
 
@@ -479,17 +479,6 @@ shap.plots.beeswarm(shap_exp)
 
 The underlying values are EDEF realized-fit contributions. The SHAP plotting
 interface is used for visualization only.
-
-## Warmup
-
-`TorchExplainer` and `TreeExplainer` use JIT-compiled kernels. Trigger
-compilation before your main evaluation:
-
-```python
-explainer = edef.TreeExplainer(model, baseline=x0, loss="squared_error")
-explainer.warmup(X[:3], y[:3])
-result = explainer(X, y)
-```
 
 ## Project status
 
