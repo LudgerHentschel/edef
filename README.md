@@ -17,8 +17,7 @@ predictions were accurate.
 
 EDEF applies the integrated-gradients framework of Sundararajan, Taly, and
 Yan (2017) to the loss function rather than the prediction, and thereby
-inherits the axiomatic properties of IG — implementation invariance,
-completeness, linearity, and the dummy axiom — while attributing realized
+inherits the axiomatic properties of IG — completeness, implementation invariance, and the dummy axiom — while attributing realized
 predictive fit rather than predicted values.
 
 ## Installation
@@ -85,12 +84,12 @@ persistent signal; feature B was correlated with returns in the training set
 but is uncorrelated in the evaluation period. Both features generate large
 prediction movements. SHAP or Integrated Gradients assigns large importances to
 both. EDEF assigns large importance to A and near-zero importance to B —
-because B's prediction movements did not improve realized fit.
+because B's prediction movements do not improve realized fit in the evaluation sample.
 
-The distinction matters most where prediction accuracy is the object of
+The distinction matters most where prediction accuracy is the natural object of
 interest: in model monitoring, out-of-sample validation, feature selection,
 overfit detection, and scientific settings where fit to held-out outcomes
-is the standard of evidence.
+is the standard of evidence. The practical differences can be small when predictions are highly accurate but are often large when models are imperfect. 
 
 ## How EDEF works
 
@@ -251,10 +250,7 @@ evaluating that behavior against realized outcomes.
 
 ### Permutation and perturbation methods
 
-Permutation importance — available in scikit-learn as `permutation_importance`,
-and implemented in various forms across the model-evaluation literature —
-measures how much model accuracy declines when a feature is shuffled or
-removed. The question asked is: "how much does the model rely on feature $j$?"
+Permutation importance — available in scikit-learn as `permutation_importance`, and implemented in various forms across the model-evaluation literature — measures how much model accuracy declines or predictions change when a feature is shuffled or removed. The question asked is: "how much does the model rely on feature $j$?"
 
 Permutation methods can target either predictive accuracy or predictions, depending on the scoring function used. The most common application — measuring the drop in model performance when a feature's values are shuffled — is a fit-based method and sits in the same camp as SAGE and EDEF. Permutation-based SHAP, by contrast, uses permutation sampling to estimate prediction attributions. The discussion below concerns the fit-based variant. It differs from EDEF in three ways.
 
@@ -364,17 +360,9 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 import edef
 
-rng = np.random.default_rng(123)
-X = rng.normal(size=(200, 3))
-y = X @ np.array([1.0, 0.5, 0.0]) + rng.normal(scale=0.5, size=200)
-
 model = LinearRegression().fit(X, y)
 result = edef.LinearExplainer(model, feature_names=["x1", "x2", "x3"])(X, y)
-print(result)
 ```
-
-The decomposition is exact for any linear model: contributions sum to the
-realized reduction in mean squared error relative to the sample mean.
 
 ### Binary classification
 
