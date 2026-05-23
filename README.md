@@ -5,7 +5,7 @@ performance into additive feature contributions.
 
 For each observation, EDEF returns feature attributions $\phi_j$ satisfying
 
-$$\sum_j \phi_j = \mathcal{L}(y,\, f(x_0)) - \mathcal{L}(y,\, f(x)),$$
+$$\sum_j \phi_j = \mathcal{L}(y, f(x_0)) - \mathcal{L}(y, f(x)),$$
 
 where $\mathcal{L}$ is the prediction loss, $x_0$ is a baseline input, $x$ is
 the observation, and $f(x)$ is the prediction function evaluated at $x$.
@@ -104,13 +104,13 @@ $$x(t) = x_0 + t \cdot (x - x_0), \qquad 0 \le t \le 1,$$
 the loss reduction from baseline to observation is
 
 $$\mathcal{L}(y, f(x_0)) - \mathcal{L}(y, f(x))
-= -\int_0^1 \frac{d}{dt}\,\mathcal{L}(y, f(x(t)))\,dt.$$
+= -\int_0^1 \frac{d}{dt} \mathcal{L}(y, f(x(t))) dt.$$
 
 By the chain rule this integral decomposes additively across features:
 
 $$\phi_j = (x_j - x_{0,j}) \int_0^1
 \left[-\frac{\partial \mathcal{L}}{\partial f} \cdot
-\frac{\partial f}{\partial x_j}\bigg|_{x(t)}\right] dt.$$
+\frac{\partial f(x(t))}{\partial x_j}\right] dt.$$
 
 The integrand is the prediction gradient $\partial f/\partial x_j$ multiplied
 by the loss gradient $\partial \mathcal{L}/\partial f$. This chain-rule factor
@@ -175,7 +175,7 @@ $$\bar\phi_j = \frac{1}{n} \sum_{i=1}^n \phi_j(x_i).$$
 Sample averages have standard errors. EDEF reports them:
 
 $$\widehat{\text{se}}(\bar\phi_j)
-= \frac{1}{\sqrt{n}}\,\text{sd}\bigl(\phi_j(x_1), \ldots, \phi_j(x_n)\bigr).$$
+= \frac{1}{\sqrt{n}} \text{sd}\bigl(\phi_j(x_1), \ldots, \phi_j(x_n)\bigr).$$
 
 Standard errors unlock inference that most attribution methods cannot provide:
 t-statistics to test whether a feature's contribution is distinguishable from
@@ -207,7 +207,7 @@ which importance is allocated.
 | Coefficients | Prediction / score | ✓ | ✓ | Global | — | Local sensitivity |
 | Integrated Gradients | Prediction | ✓ | — | Local | — | Continuous path |
 | SHAP | Prediction | — | — | Local, aggregated | — | Discrete averaging |
-| Permutation / perturbation | Accuracy/Prediction | — | — | Global | — | Discrete removal |
+| Permutation / perturbation | Prediction/Accuracy | — | — | Global | — | Discrete removal |
 | SAGE | Accuracy | — | — | Global | — | Discrete averaging |
 | **EDEF** | **Accuracy** | **✓** | **✓** | **Global** | **✓** | **Continuous path** |
 
@@ -220,7 +220,7 @@ approximation error.
 
 ### Integrated Gradients
 
-Integrated Gradients computes $\phi_j = (x_j - x_{0,j}) \int_0^1 \partial f/\partial x_j \big|_{x(t)}\,dt$ — the integral of the prediction gradient along the path from $x_0$ to $x$. EDEF computes the integral of the loss gradient along the same path. They share a path, a baseline, and an integration method. They differ in exactly one thing: what is integrated.
+Integrated Gradients computes $\phi_j = (x_j - x_{0,j}) \int_0^1 \partial f(x(t))/\partial x_j dt$ — the integral of the prediction gradient along the path from $x_0$ to $x$. EDEF computes the integral of the loss gradient along the same path. They share a path, a baseline, and an integration method. They differ in exactly one thing: what is integrated.
 
 That difference in the integrand is the full story. IG measures how much each
 feature moved the prediction as we interpolate from baseline to observation.
