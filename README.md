@@ -3,67 +3,129 @@
 EDEF (Euler Decomposition of Explained Fit) decomposes realized predictive
 performance into additive feature contributions.
 
-For regression, EDEF decomposes reductions in realized squared-error loss.
-For classification, EDEF decomposes improvements in realized log loss.
+For each observation, EDEF returns feature attributions $\phi_j$ satisfying
 
-Formally, EDEF computes attributions $\phi_j$ satisfying
+$$\sum_j \phi_j = \mathcal{L}(y,\, \hat{y}(x_0)) - \mathcal{L}(y,\, \hat{y}(x)),$$
 
-$$\sum_j \phi_j = \mathcal{L}(\hat{y}(x_0)) - \mathcal{L}(\hat{y}(x)),$$
+where $\mathcal{L}$ is the prediction loss, $x_0$ is a baseline input, and $x$
+is the observation. A positive contribution means the feature improved realized
+predictive fit relative to the baseline.
 
-where $\mathcal{L}(\hat{y}(x_0)$ is the model loss at a baseline input $x_0$
-and $\mathcal{L}(\hat{y}(x))$ is the model loss at the observed input $x$.
-A larger value corresponds to better realized predictive performance.
+Standard attribution methods explain predictions. EDEF explains whether those
+predictions were accurate.
 
-EDEF answers a different question from standard prediction-attribution methods.
+## Using EDEF
 
-Prediction attribution asks:
+EDEF follows a familiar explainer pattern:
 
-```text
-"Why did the model predict this value?"
+```python
+explainer = edef.LinearExplainer(model, feature_names=["x1", "x2", "x3"])
+result = explainer(X, y)
+print(result)
 ```
 
-EDEF asks:
-
 ```text
-"How much did this feature contribute to realized predictive performance?"
+Feature contributions
+---------------------
+      x1  edef= 0.979  se= 0.134  t= 7.33  share= 0.741
+      x2  edef= 0.343  se= 0.064  t= 5.33  share= 0.260
+      x3  edef=-0.001  se= 0.002  t=-0.40  share=-0.000
 ```
 
-These questions and their answers serve different purposes. Explaining
-predictions characterizes model outputs, regardless of whether those outputs
-are accurate. Explaining realized fit characterizes which features actually
-drove predictive accuracy, conditional on observed outcomes.
+Unlike most attribution methods, EDEF reports standard errors and t-statistics
+alongside attribution values. Features that move predictions without improving
+accuracy show up near zero.
 
 ## Why EDEF?
 
-Prediction-attribution methods explain how features influence model outputs.
-They do not explain whether those prediction movements improved realized
-predictive performance.
+Prediction-attribution methods answer "why did the model predict this value?"
+EDEF answers "which features made the model accurate here?"
 
-A feature can strongly affect predictions while contributing little, nothing,
-or even negatively to realized fit.
+These questions have different answers. A feature can strongly influence a
+prediction while contributing nothing to predictive accuracy — or can
+actively hurt it. This happens when a feature moves predictions in the wrong
+direction, when a feature is overfit, or when a feature captures real signal
+on average but adds noise on a particular evaluation sample.
 
-For example:
+Consider a model trained to predict financial returns. Feature A captures a
+persistent signal; feature B was correlated with returns in the training set
+but is uncorrelated in the evaluation period. Both features generate large
+prediction movements. SHAP or Integrated Gradients assigns large importances to
+both. EDEF assigns large importance to A and near-zero importance to B —
+because B's prediction movements did not improve realized fit.
 
-- a feature may move predictions aggressively but mostly add noise;
-- an overfit feature may appear highly important for predictions while
-  harming out-of-sample performance;
-- unstable nonlinear effects may generate large prediction attributions
-  with weak realized predictive value.
+The distinction matters most where prediction accuracy is the object of
+interest: in model monitoring, out-of-sample validation, feature selection,
+overfit detection, and scientific settings where fit to held-out outcomes
+is the standard of evidence.
 
-EDEF measures realized fit contributions directly by decomposing changes in
-loss observation-by-observation.
+## How EDEF works
 
-This distinction matters especially in:
+EDEF applies the path-integral perspective of Integrated Gradients — but to
+the loss function rather than the prediction.
 
-- noisy prediction problems, such as financial forecasting;
-- model monitoring and auditing;
-- feature-selection validation;
-- overfit or unstable models;
-- scientific prediction settings where fit to held-out outcomes matters.
+Along the straight-line path
 
-Because EDEF works at the observation level, it naturally supports standard
-errors, t-statistics, and inference for feature importance — outputs most
-prediction-attribution methods do not provide.
+$$x(t) = x_0 + t \cdot (x - x_0), \qquad 0 \le t \le 1,$$
+
+the loss reduction from baseline to observation is
+
+$$\mathcal{L}(y, \hat{y}(x_0)) - \mathcal{L}(y, \hat{y}(x))
+= -\int_0^1 \frac{d}{dt}\,\mathcal{L}(y, \hat{y}(x(t)))\,dt.$$
+
+By the chain rule this integral decomposes additively across features:
+
+$$\phi_j = (x_j - x_{0,j}) \int_0^1
+\left[-\frac{\partial \mathcal{L}}{\partial \hat{y}} \cdot
+\frac{\partial \hat{y}}{\partial x_j}\bigg|_{x(t)}\right] dt.$$
+
+The integrand is the prediction gradient $\partial \hat{y}/\partial x_j$
+multiplied by the loss gradient $\partial \mathcal{L}/\partial \hat{y}$.
+This chain-rule factor is what distinguishes EDEF from Integrated Gradients,
+which integrates only the prediction gradient. For squared-error loss,
+$\partial \mathcal{L}/\partial \hat{y} = -2(y - \hat{y}(x(t)))$, so EDEF
+weights the prediction gradient by how wrong the prediction is at each point
+along the path. Features that move predictions toward the truth accumulate
+positive contributions; features that move predictions away accumulate
+negative contributions.
+
+This integral is computed differently for each model class:
+
+- **Linear models.** The integral has a closed form. For regression,
+  $\phi_j = \beta_j(x_j - x_{0,j}) \cdot (2\bar{y} - \bar{y}_{\text{pred}})$
+  in centered coordinates. No quadrature is needed.
+
+- **Tree models.** Via TreeIG, the path trace gives the exact sequence of
+  split crossings and prediction jumps along $x(t)$. At each crossing, the
+  loss changes by a computable amount. EDEF assigns that loss change to the
+  crossing feature. The result is exact — no quadrature, no approximation.
+
+- **PyTorch models.** Automatic differentiation computes
+  $\partial \mathcal{L}/\partial x_j$ at each interpolation point;
+  Gauss-Legendre quadrature integrates over $t$.
+
+- **Black-box sklearn models.** Finite-difference approximations to the loss
+  gradient replace automatic differentiation; Gauss-Legendre quadrature
+  integrates over $t$.
+
+## Statistical inference
+
+Because EDEF computes a contribution $\phi_j(x_i)$ for each feature and each
+observation, feature importances are sample averages:
+
+$$\bar\phi_j = \frac{1}{n} \sum_{i=1}^n \phi_j(x_i).$$
+
+Sample averages have standard errors. EDEF reports them:
+
+$$\widehat{\text{se}}(\bar\phi_j)
+= \frac{1}{\sqrt{n}}\,\text{sd}\bigl(\phi_j(x_1), \ldots, \phi_j(x_n)\bigr).$$
+
+Standard errors unlock inference that most attribution methods cannot provide:
+t-statistics to test whether a feature's contribution is distinguishable from
+zero, standard errors on grouped contributions, and uncertainty quantification
+across resampled evaluation sets. In settings where prediction accuracy is
+itself the quantity of scientific interest — rather than a prediction to be
+explained — these inferential outputs are as important as the point estimates.
 
 ## Relation to SHAP, Integrated Gradients, and SAGE
 
@@ -71,63 +133,78 @@ SHAP and Integrated Gradients explain predictions. EDEF and SAGE explain
 realized model fit. These are fundamentally different attribution targets.
 
 **SHAP and Integrated Gradients** ask:
-
-```text
-"How much does feature j contribute to the prediction?"
-```
+> "How much does feature $j$ contribute to the prediction?"
 
 **EDEF and SAGE** ask:
-
-```text
-"How much does feature j contribute to realized model fit?"
-```
-
-### SHAP
-
-SHAP computes attribution values from discrete feature inclusion effects
-averaged over coalitions. SHAP does not evaluate realized outcomes when
-computing prediction attributions.
-
-A feature can receive large SHAP importance if it moves predictions strongly,
-even if those prediction movements do not improve realized predictive
-performance.
+> "How much does feature $j$ contribute to realized predictive accuracy?"
 
 ### Integrated Gradients
 
-Integrated Gradients accumulates prediction changes along a straight-line path
-from a baseline input $x_0$ to the observed input $x$.
+Integrated Gradients computes $\phi_j = (x_j - x_{0,j}) \int_0^1 \partial \hat{y}/\partial x_j\big|_{x(t)}\,dt$ — the integral of the prediction gradient along the path from $x_0$ to $x$. EDEF computes the integral of the loss gradient along the same path. They share a path, a baseline, and an integration method. They differ in exactly one thing: what is integrated.
 
-For smooth models, EDEF builds directly on this path-integral perspective, but
-applies it to loss functions rather than predictions. For tree models, EDEF
-uses exact TreeIG path traces rather than numerical quadrature.
+That difference in the integrand is the full story. IG measures how much each
+feature moved the prediction as we interpolate from baseline to observation.
+EDEF measures how much each feature improved or worsened predictive accuracy
+as we make that same interpolation. For a perfect prediction, IG and EDEF
+give the same sign for every feature. For a poor prediction, features that
+moved the prediction in the wrong direction get negative EDEF attribution
+even if they get large positive IG attribution.
+
+For a linear model with zero intercept and zero baseline, EDEF and IG agree in
+sign but differ in magnitude, with EDEF attributions scaled by the accuracy of
+the prediction. As predictions become less accurate, the two methods diverge.
+
+### SHAP
+
+SHAP builds attributions from discrete feature inclusion effects averaged over
+coalitions of other features. It does not follow a path and does not observe
+realized outcomes. A feature can receive large SHAP importance purely because
+it moves predictions strongly, regardless of whether those prediction movements
+correspond to actual patterns in the outcome variable.
+
+SHAP's coalition construction is deliberately indifferent to whether predictions
+are accurate. The same coalition structure, the same expected-prediction
+baseline, and the same discrete inclusion/exclusion logic apply whether the
+model generalizes well or poorly. This makes SHAP a precise tool for
+explaining the model's behavior in input space, and an imprecise tool for
+evaluating that behavior against realized outcomes.
 
 ### SAGE
 
-SAGE is one of the few existing methods that explains model fit rather than
-predictions. SAGE applies Shapley-value ideas to predictive performance by
-measuring changes in loss as features are removed and marginalized out.
+SAGE is the closest existing method to EDEF in motivation. Both measure feature
+contributions to realized predictive performance rather than to predictions.
+They differ substantially in construction.
 
-EDEF and SAGE share the same focus on realized predictive performance. They
-differ fundamentally in construction:
+SAGE applies Shapley-style coalition averaging to predictive performance: it
+measures how much each feature changes expected loss as it enters or leaves a
+coalition, where absent features are marginalized over a background
+distribution. The SAGE attribution for feature $j$ asks "how much worse would
+the model perform if it could not use feature $j$?" — a global counterfactual
+question about feature removal.
 
-- SAGE uses Shapley-style coalition averaging over feature subsets;
-- EDEF uses Euler/path-integral decompositions of realized loss changes.
+EDEF asks "how much did feature $j$ contribute to the loss reduction for this
+observation, along the specific path from baseline to observation?" — a local
+path-integral question about feature movement. The difference is analogous to
+the difference between SHAP and IG: Shapley-style marginalizing out features
+versus path-integral accumulation of gradient contributions.
 
-SAGE currently does not provide the large-scale backend optimizations that
-TreeSHAP provides for SHAP. EDEF instead exploits additive path decompositions
-directly, yielding exact and computationally efficient realized-fit
-attributions for many important model classes.
+Three practical consequences follow. First, EDEF requires only a baseline
+vector; SAGE requires a background distribution from which to marginalize out
+features. Second, EDEF computes observation-level contributions that aggregate
+naturally to sample-average importances with standard errors; SAGE produces
+global importance estimates without natural observation-level decompositions.
+Third, EDEF exploits closed-form path integrals and exact tree path traces for
+efficient computation; SAGE currently lacks analogous backend optimizations
+and can be expensive for large models.
 
 ## Available explainers
-
-EDEF currently provides four explainer families:
 
 | Explainer | Intended models | Method |
 |---|---|---|
 | `LinearExplainer` | Linear and generalized linear models | Closed-form exact decomposition |
-| `TorchExplainer` | PyTorch neural networks | Automatic differentiation + path integration |
+| `TorchExplainer` | PyTorch neural networks | Autograd + Gauss-Legendre quadrature |
 | `TreeExplainer` | Tree ensembles | Exact TreeIG path traces |
-| `NumericalExplainer` | Black-box sklearn-style models | Numerical loss-gradient integration |
+| `NumericalExplainer` | Any sklearn-style model | Finite-difference + Gauss-Legendre quadrature |
 
 ## Supported models
 
@@ -139,418 +216,222 @@ EDEF currently provides four explainer families:
 
 ### PyTorch models
 
-- Regression
-- Binary classification
-- Multiclass classification
+- Regression (squared-error loss)
+- Binary classification (log loss)
+- Multiclass classification (softmax log loss)
 
 ### Tree models (via TreeIG)
 
-- Regression
-- Binary additive-score classification
-- Multiclass additive-score classification
+- `sklearn.tree.DecisionTreeRegressor`
+- `sklearn.ensemble.RandomForestRegressor`
+- `sklearn.ensemble.ExtraTreesRegressor`
+- `sklearn.ensemble.GradientBoostingRegressor`
+- `sklearn.ensemble.GradientBoostingClassifier`
+- `xgboost.XGBRegressor`, `xgboost.XGBClassifier`, `xgboost.Booster`
+- `lightgbm.LGBMRegressor`, `lightgbm.LGBMClassifier`, `lightgbm.Booster`
 
-Tree classification uses raw margins/logits rather than probabilities.
+Tree classification uses raw margins/logits rather than predicted
+probabilities. Probabilities are not additive across trees.
 
 ### Numerical black-box models
 
-- Regression models with `predict(X)`
-- Binary classifiers with `predict_proba(X)`
-- Multiclass classifiers with `predict_proba(X)`
-- sklearn MLP models via `NumericalExplainer`
+Any model with `predict(X)` (regression) or `predict_proba(X)`
+(classification), including sklearn pipelines and `MLPRegressor`/
+`MLPClassifier`.
 
 ## Not currently supported
 
-Current limitations include:
-
 - probability-output tree attribution;
 - missing-value tree routing;
-- CatBoost;
-- SHAP-compatible plotting with uncertainty visualization.
+- CatBoost.
 
 ## Installation
-
-Basic install:
 
 ```bash
 pip install edef
 ```
 
-Local editable install:
-
-```bash
-pip install -e .
-```
-
 Optional dependencies:
 
 ```bash
-pip install torch        # for TorchExplainer
-pip install treeig       # for TreeExplainer
-pip install shap         # for SHAP plotting compatibility
+pip install torch    # for TorchExplainer
+pip install treeig   # for TreeExplainer
+pip install shap     # for SHAP plotting compatibility
 ```
 
-## Quickstart: Linear Regression
+## Linear regression
 
 ```python
 import numpy as np
 from sklearn.linear_model import LinearRegression
-
 import edef
 
 rng = np.random.default_rng(123)
-
 X = rng.normal(size=(200, 3))
-beta = np.array([1.0, 0.5, 0.0])
-y = X @ beta + rng.normal(scale=0.5, size=200)
+y = X @ np.array([1.0, 0.5, 0.0]) + rng.normal(scale=0.5, size=200)
 
-model = LinearRegression()
-model.fit(X, y)
-
-explainer = edef.LinearExplainer(
-    model,
-    feature_names=["x1", "x2", "x3"],
-)
-
-result = explainer(X, y)
+model = LinearRegression().fit(X, y)
+result = edef.LinearExplainer(model, feature_names=["x1", "x2", "x3"])(X, y)
 print(result)
 ```
 
-Typical output:
+The decomposition is exact for any linear model: contributions sum to the
+realized reduction in mean squared error relative to the sample mean.
 
-```text
-Feature contributions
----------------------
-      x1  edef= 0.978775  se= 0.133580  t= 7.327  share= 0.741
-      x2  edef= 0.343310  se= 0.064430  t= 5.328  share= 0.260
-      x3  edef=-0.000607  se= 0.001504  t=-0.403  share=-0.000
-```
-
-Positive contributions indicate improved realized predictive fit. Feature
-contributions add exactly to total explained fit:
+## Binary classification
 
 ```python
-np.testing.assert_allclose(result.values.sum(), result.total)
-```
-
-## Quickstart: Binary Classification
-
-```python
-import numpy as np
 from sklearn.linear_model import LogisticRegression
-
 import edef
 
-rng = np.random.default_rng(123)
-
-X = rng.normal(size=(500, 3))
-beta = np.array([1.5, 0.75, 0.0])
-eta = X @ beta - 0.25
-p = 1.0 / (1.0 + np.exp(-eta))
-y = rng.binomial(1, p, size=500)
-
-model = LogisticRegression(C=1e6, solver="lbfgs")
-model.fit(X, y)
-
-explainer = edef.LinearExplainer(
-    model,
-    loss="log_loss",
-    feature_names=["x1", "x2", "x3"],
-)
-
-result = explainer(X, y)
-print(result)
+model = LogisticRegression().fit(X, y)
+result = edef.LinearExplainer(model, loss="log_loss", feature_names=[...])(X, y)
 ```
 
-For classification, EDEF decomposes realized reductions in log loss.
-
-## Quickstart: Tree Regression
+## Tree regression
 
 ```python
-from sklearn.ensemble import RandomForestRegressor
-
+from sklearn.ensemble import GradientBoostingRegressor
 import edef
 
-model = RandomForestRegressor(n_estimators=20, max_depth=4, random_state=0)
-model.fit(X, y)
+model = GradientBoostingRegressor(n_estimators=100, max_depth=3).fit(X, y)
 
-explainer = edef.TreeExplainer(
-    model,
-    baseline=X.mean(axis=0),
-    loss="squared_error",
-)
-
-result = explainer(X, y)
-print(result)
+explainer = edef.TreeExplainer(model, baseline=X.mean(axis=0), loss="squared_error")
+result = explainer(X_eval, y_eval)
 ```
 
-For tree models, EDEF uses exact TreeIG split-crossing decompositions rather
-than numerical gradient approximations.
+EDEF uses TreeIG to find the exact sequence of split-crossing events along
+the interpolation path for each observation. Each crossing changes the
+prediction, which changes the loss. EDEF assigns the loss change at each
+crossing to the crossing feature. The result is exact — no quadrature,
+no approximation parameters.
 
-## Quickstart: Tree Multiclass Classification
+## Tree classification
 
 ```python
 from sklearn.ensemble import GradientBoostingClassifier
-
 import edef
 
-model = GradientBoostingClassifier(
-    n_estimators=25,
-    max_depth=3,
-    learning_rate=0.07,
-    random_state=0,
-)
-model.fit(X, y)
-
-explainer = edef.TreeExplainer(
-    model,
-    baseline=X.mean(axis=0),
-    loss="multiclass_log_loss",
-)
-
-result = explainer(X, y)
-print(result)
+model = GradientBoostingClassifier(...).fit(X, y)
+explainer = edef.TreeExplainer(model, baseline=X.mean(axis=0), loss="log_loss")
+result = explainer(X_eval, y_eval)
 ```
 
-For multiclass tree models, EDEF computes exact softmax log-loss decompositions
-using TreeIG path traces across all class margins.
+For multiclass models, use `loss="multiclass_log_loss"`. EDEF merges the
+split-crossing sequences across all class-margin trees, applying exact softmax
+log-loss changes at each event.
 
-## Quickstart: NumericalExplainer with sklearn MLP
-
-`NumericalExplainer` provides EDEF for smooth black-box models that expose
-standard sklearn-style prediction methods.
-
-This is especially useful for:
-- `MLPRegressor`
-- `MLPClassifier`
-- sklearn pipelines
-- models without automatic differentiation support
-
-For regression, `NumericalExplainer` uses `predict(X)` and decomposes realized
-squared-error improvement.
+## PyTorch models
 
 ```python
-import numpy as np
+import edef
+
+explainer = edef.TorchExplainer(
+    model,
+    baseline=X_train.mean(axis=0),
+    loss="squared_error",   # or "log_loss", "multiclass_log_loss"
+    n_steps=50,
+    feature_names=[...],
+)
+result = explainer(X_eval, y_eval)
+```
+
+## Black-box sklearn models
+
+```python
 from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
-
 import edef
 
-rng = np.random.default_rng(123)
-
-X = rng.normal(size=(400, 3))
-
-y = (
-    1.0 * X[:, 0]
-    + 0.75 * X[:, 1] ** 2
-    + rng.normal(scale=0.25, size=400)
-)
-
-model = make_pipeline(
-    StandardScaler(),
-    MLPRegressor(
-        hidden_layer_sizes=(12,),
-        activation="tanh",
-        alpha=1e-4,
-        max_iter=2000,
-        random_state=0,
-    ),
-)
-
-model.fit(X, y)
+model = make_pipeline(StandardScaler(), MLPRegressor(...)).fit(X, y)
 
 explainer = edef.NumericalExplainer(
     model,
     baseline=X.mean(axis=0),
     loss="squared_error",
     n_steps=32,
-    step_size=1e-4,
-    feature_names=["x1_linear", "x2_nonlinear", "x3_noise"],
+    feature_names=[...],
 )
-
-result = explainer(X, y)
-
-print(result)
+result = explainer(X_eval, y_eval)
 ```
-
-Typical output:
-
-```text
-Feature contributions
----------------------
-         x1_linear  edef= 1.006465  se= 0.118972  t= 8.460  share= 0.372
-      x2_nonlinear  edef= 1.706453  se= 0.229947  t= 7.421  share= 0.631
-          x3_noise  edef=-0.007177  se= 0.002685  t=-2.672  share=-0.003
-```
-
-For classification, `NumericalExplainer` uses `predict_proba(X)` and
-decomposes realized log-loss improvement.
-
-Internally, `NumericalExplainer` computes finite-difference approximations to
-loss gradients and integrates them along the straight-line path from the
-baseline input to each observation.
 
 ## Grouped contributions
-
-Feature contributions can be grouped after estimation.
 
 ```python
 grouped = result.group(["signal", "signal", "noise"])
 ```
 
-Grouped contributions preserve exact additivity:
-
-```python
-np.testing.assert_allclose(grouped.values.sum(), grouped.total)
-```
-
-This is especially useful for:
-
-- one-hot encoded variables;
-- grouped factors and embedding blocks;
-- sector/style decompositions;
-- hierarchical feature structures.
+Grouped contributions preserve exact additivity. Group labels map input
+features to named groups; features sharing a label are summed. This is
+useful for one-hot encoded variables, embedding blocks, factor groups, and
+hierarchical feature structures.
 
 ## Statistical inference
 
-EDEF computes observation-level fit contributions and aggregates them across
-the evaluation sample. This permits direct estimation of standard errors,
-t-statistics, and grouped contribution inference — outputs most
-prediction-attribution methods do not provide.
-
-Results expose:
-
 ```python
-result.values            # feature contributions
+result.values            # feature contributions (point estimates)
 result.standard_errors   # standard errors
-result.t_values          # t-statistics
+result.t_values          # t-statistics: values / standard_errors
 result.proportions       # share of total explained fit
-result.to_frame()        # pandas DataFrame
+result.to_frame()        # pandas DataFrame, sorted by contribution
+result.plot()            # horizontal bar chart with confidence intervals
 ```
 
-## SHAP plotting compatibility
+Standard errors are computed from the observation-level contributions
+and scale correctly under grouping.
 
-EDEF can export contributions into a SHAP-compatible `Explanation` object
-for visualization.
+## SHAP plotting
 
 ```python
 shap_exp = result.to_shap_explanation(data=X)
-```
 
-This allows direct use of SHAP plotting routines:
-
-```python
 import shap
 shap.plots.beeswarm(shap_exp)
 ```
 
-The compatibility layer supports SHAP plotting only. The underlying values remain EDEF realized-fit contributions rather than SHAP prediction attributions.
+The underlying values are EDEF realized-fit contributions. The SHAP plotting
+interface is used for visualization only.
 
-## Example notebooks
+## Warmup
 
-The repository includes executable Jupyter notebooks illustrating the main
-EDEF workflows and conceptual distinctions.
-
-### Quickstart notebooks
-
-- `01_linear_regression_quickstart.ipynb`
-- `02_linear_classification_quickstart.ipynb`
-- `03_tree_regression_quickstart.ipynb`
-- `04_tree_classification_quickstart.ipynb`
-
-These notebooks demonstrate:
-- exact additivity of realized-fit contributions;
-- standard errors and t-statistics;
-- grouped contributions;
-- regression and classification workflows;
-- exact TreeIG-based decomposition for tree models.
-
-### Conceptual comparison notebook
-
-- `05_shap_vs_edef.ipynb`
-
-This notebook compares SHAP prediction attribution with EDEF realized-fit
-attribution on the same fitted models and evaluation samples.
-
-The comparison highlights a central distinction:
-
-- SHAP explains how features influence predictions;
-- EDEF explains how features influence realized predictive performance.
-
-In particular, the notebook demonstrates that a feature can receive large
-prediction attribution while contributing little or negatively to realized
-model fit.
-
-
-## Core idea
-
-For regression, EDEF decomposes the realized reduction in mean squared error
-relative to an intercept-only baseline:
-
-```text
-baseline loss = E[(y - E[y])^2]
-model loss    = E[(y - ŷ)^2]
-```
-
-EDEF computes additive feature contributions satisfying:
-
-```text
-sum_j contribution_j  =  baseline loss - model loss
-```
-
-The decomposition operates observation-by-observation and aggregates naturally
-across evaluation samples. For linear models, contributions are computed in
-closed form. For PyTorch models, EDEF integrates loss gradients along
-the straight-line path from the baseline to each observation. For tree models,
-EDEF uses exact TreeIG split-crossing path traces.
-
-## Warmup for tree and PyTorch models
-
-`TorchExplainer` and `TreeExplainer` use JIT-compiled kernels. The first call
-includes compilation, which can take several seconds. Run warmup in advance
-to compile before your main evaluation:
+`TorchExplainer` and `TreeExplainer` use JIT-compiled kernels. Trigger
+compilation before your main evaluation:
 
 ```python
 explainer = edef.TreeExplainer(model, baseline=x0, loss="squared_error")
 explainer.warmup(X[:3], y[:3])
-
 result = explainer(X, y)
 ```
 
-Subsequent calls on the same model are fast.
-
 ## Project status
 
-EDEF is production-ready for exact attribution of model fit. The current
-release covers the dominant regression and classification models in the Python
-ecosystem:
+EDEF covers the dominant regression and classification models in the Python
+ecosystem with exact or high-accuracy decompositions:
 
-- closed-form linear regression and binary classification;
-- PyTorch gradient-based EDEF for regression, binary classification, and multiclass classification;
-- exact tree-model EDEF via TreeIG;
-- multiclass log-loss EDEF;
-- numerical-gradient EDEF for sklearn-style black-box models;
-- grouped contributions;
-- statistical inference and standard errors;
-- SHAP-compatible plotting adapters.
-
-Future extensions may include:
-
-- CatBoost support, which requires customized analysis of oblivious trees
-  and categorical split structure;
-- alternative allocation rules for simultaneous multi-feature effects at
-  coincident split crossings.
+- closed-form exact attribution for linear models;
+- autograd path integration for PyTorch models;
+- exact attribution for tree ensembles via TreeIG;
+- numerical attribution for any sklearn-interface model;
+- multiclass log-loss decomposition throughout;
+- observation-level contributions with standard errors and t-statistics;
+- grouping, SHAP-compatible plotting, and pandas output.
 
 ## References
 
 EDEF:
 
 - Hentschel, Ludger. 2026.
-  "Feature importance for model fit: Nonlinear regression and classification
-  in machine learning models."
+  "Feature importance for model fit: Nonlinear regression and
+  classification in machine learning models."
 
 - Hentschel, Ludger. 2026.
   "Feature importance for predictive accuracy: An Euler decomposition."
+
+TreeIG:
+
+- Hentschel, Ludger. 2026.
+  "TreeIG: Exact Integrated Gradients for Tree-Based Models."
 
 Integrated Gradients:
 
@@ -565,19 +446,16 @@ SHAP and TreeSHAP:
   *Advances in Neural Information Processing Systems (NeurIPS).*
 
 - Lundberg, Scott M., Gabriel Erion, and Su-In Lee. 2020.
-  "From Local Explanations to Global Understanding with Explainable AI for Trees."
+  "From Local Explanations to Global Understanding with Explainable AI
+  for Trees."
   *Nature Machine Intelligence.*
 
 SAGE:
 
 - Covert, Ian, Scott Lundberg, and Su-In Lee. 2020.
-  "Understanding Global Feature Contributions With Additive Importance Measures."
+  "Understanding Global Feature Contributions With Additive Importance
+  Measures."
   *NeurIPS.*
-
-TreeIG:
-
-- Hentschel, Ludger. 2026.
-  "TreeIG: Exact Integrated Gradients for Tree-Based Models."
 
 ## License
 
