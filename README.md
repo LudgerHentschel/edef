@@ -1,24 +1,16 @@
 # EDEF
 
-EDEF (Euler Decomposition of Explained Fit) decomposes realized predictive
-performance into additive feature contributions.
+EDEF (Euler Decomposition of Explained Fit) decomposes realized predictive performance into additive feature contributions.
 
 For each observation, EDEF returns feature attributions $\phi_j$ satisfying
 
 $$\sum_j \phi_j = \mathcal{L}(y, f(x_0)) - \mathcal{L}(y, f(x)),$$
 
-where $\mathcal{L}$ is the prediction loss, $x_0$ is a baseline input, $x$ is
-the observation, and $f(x)$ is the prediction function evaluated at $x$.
-A positive contribution means the feature improved realized predictive fit
-relative to the baseline.
+where $\mathcal{L}$ is the prediction loss, $x_0$ is a baseline input, $x$ is the observation, and $f(x)$ is the prediction function evaluated at $x$. A positive contribution means the feature improved realized predictive fit relative to the baseline.
 
-Standard attribution methods explain predictions. EDEF explains whether those
-predictions were accurate.
+Standard attribution methods explain predictions. EDEF explains whether those predictions were accurate.
 
-EDEF applies the integrated-gradients framework of Sundararajan, Taly, and
-Yan (2017) to the loss function rather than the prediction, and thereby
-inherits the main axiomatic properties of IG — completeness, implementation invariance, and the dummy axiom — while attributing realized
-predictive fit rather than predicted values.
+EDEF applies the integrated-gradients framework of Sundararajan, Taly, and Yan (2017) to the loss function rather than the prediction, and thereby inherits the main axiomatic properties of IG — completeness, implementation invariance, and the dummy axiom — while attributing realized predictive fit rather than predicted values.
 
 ## Installation
 
@@ -36,8 +28,7 @@ pip install shap     # for SHAP plotting compatibility
 
 ## Using EDEF
 
-Although EDEF attributes model fit instead of predictions, it follows a
-familiar explainer pattern:
+Although EDEF attributes model fit instead of predictions, it follows a familiar explainer pattern:
 
 ```python
 import numpy as np
@@ -61,40 +52,23 @@ Feature contributions
       x3  edef=-0.001  se= 0.002  t=-0.40  share=-0.000
 ```
 
-Unlike most attribution methods, EDEF reports standard errors and t-statistics
-alongside attribution values. Features that move predictions without improving
-accuracy show up near zero.
+Unlike most attribution methods, EDEF reports standard errors and t-statistics alongside attribution values. Features that move predictions without improving accuracy show up near zero.
 
-The decomposition is exact for any linear model: contributions sum to the
-realized reduction in mean squared error relative to the sample mean.
+Although based on integrated gradients, EDEF only requires numerical differentiation and integration for smooth nonlinear models. This tends to be fast when automatic differentiation is available. For linear models, EDEF implements very fast analytical solutions. For tree-based models, where integrated gradients may feel mismatched, EDEF exploits the insight from TreeIG that integrated gradients are a equal to the sum of discrete prediction changes along the integration path.
 
 ## Why EDEF?
 
-Prediction-attribution methods answer "why did the model predict this value?"
-EDEF answers "which features made the model accurate here?"
+Prediction-attribution methods answer "why did the model predict this value?" EDEF answers "which features made the model accurate here?"
 
-These questions have different answers. A feature can strongly influence a
-prediction while contributing nothing to predictive accuracy — or can
-actively hurt it. This happens when a feature moves predictions in the wrong
-direction, when a feature is overfit, or when a feature captures real signal
-on average but adds noise on a particular evaluation sample.
+These questions have different answers. A feature can strongly influence a prediction while contributing nothing to predictive accuracy, or can actively hurt it. This happens when a feature moves predictions in the wrong direction, when a feature is overfit, or when a feature captures real signal on average but adds noise on a particular evaluation sample.
 
-Consider a model trained to predict financial returns. Feature A captures a
-persistent signal; feature B was correlated with returns in the training set
-but is uncorrelated in the evaluation period. Both features generate large
-prediction movements. SHAP or Integrated Gradients assigns large importances to
-both. EDEF assigns large importance to A and near-zero importance to B —
-because B's prediction movements do not improve realized fit in the evaluation sample.
+Consider a model trained to predict financial returns. Feature A captures a persistent signal; feature B was correlated with returns in the training set but is uncorrelated in the evaluation period. Both features generate large prediction movements. SHAP or Integrated Gradients assigns large importances to both. EDEF assigns large importance to A and near-zero importance to B because B's prediction movements do not improve realized fit in the evaluation sample.
 
-The distinction matters most where prediction accuracy is the natural object of
-interest: in model monitoring, out-of-sample validation, feature selection,
-overfit detection, and scientific settings where fit to held-out outcomes
-is the standard of evidence. The practical differences can be small when predictions are highly accurate but are often large when models are imperfect. 
+The distinction matters most where prediction accuracy is the natural object of interest: in model monitoring, out-of-sample validation, feature selection, overfit detection, and scientific settings where fit to held-out outcomes is the standard of evidence. The practical differences can be small when predictions are highly accurate but are often large when models are imperfect.
 
 ## How EDEF works
 
-EDEF applies the path-integral perspective of Integrated Gradients — but to
-the loss function rather than the prediction.
+EDEF applies the path-integral perspective of Integrated Gradients — but to the loss function rather than the prediction.
 
 Along the straight-line path
 
@@ -102,24 +76,13 @@ $$x(t) = x_0 + t \cdot (x - x_0), \qquad 0 \le t \le 1,$$
 
 the loss reduction from baseline to observation is
 
-$$\mathcal{L}(y, f(x_0)) - \mathcal{L}(y, f(x))
-= -\int_0^1 \frac{d}{dt} \mathcal{L}(y, f(x(t))) \quad dt.$$
+$$\mathcal{L}(y, f(x_0)) - \mathcal{L}(y, f(x)) = -\int_0^1 \frac{d}{dt} \mathcal{L}(y, f(x(t))) \quad dt.$$
 
 By the chain rule this integral decomposes additively across features:
 
-$$\phi_j = (x_j - x_{0,j}) \int_0^1
-\left[-\frac{\partial \mathcal{L}}{\partial f} \cdot
-\frac{\partial f}{\partial x_j}\Bigg{|}_{x(t)}\right] dt.$$
+$$\phi_j = (x_j - x_{0,j}) \int_0^1 \left[-\frac{\partial \mathcal{L}}{\partial f} \cdot \frac{\partial f}{\partial x_j}\Bigg{|}_{x(t)}\right] dt.$$
 
-The integrand is the prediction gradient $\partial f/\partial x_j$ multiplied
-by the loss gradient $\partial \mathcal{L}/\partial f$. This chain-rule factor
-is what distinguishes EDEF from Integrated Gradients, which integrates only the
-prediction gradient. For squared-error loss,
-$\partial \mathcal{L}/\partial f = -2(y - f(x(t)))$, so EDEF weights the
-prediction gradient by how wrong the prediction is at each point along the
-path. Features that move predictions toward the truth accumulate positive
-contributions; features that move predictions away accumulate negative
-contributions.
+The integrand is the prediction gradient $\partial f/\partial x_j$ multiplied by the loss gradient $\partial \mathcal{L}/\partial f$. This chain-rule factor is what distinguishes EDEF from Integrated Gradients, which integrates only the prediction gradient. For squared-error loss, $\partial \mathcal{L}/\partial f = -2(y - f(x(t)))$, so EDEF weights the prediction gradient by how wrong the prediction is at each point along the path. Features that move predictions toward the truth accumulate positive contributions; features that move predictions away accumulate negative contributions.
 
 This integral is computed differently for each model class:
 
@@ -150,43 +113,27 @@ The table illustrates computational costs using full-dataset forward passes as t
 | Permutation ($R=10$) | $R \cdot p$ | 1,000 | 10,000 |
 | SAGE ($T=512$, $B=128$) | $T \cdot B \cdot p$ | 6,500,000 | 65,000,000 |
 
-At $p=1{,}000$, EDEF requires 200 times fewer passes than permutation and over
-a million times fewer than SAGE. The gap widens with $p$.
+At $p=1{,}000$, EDEF requires 200 times fewer passes than permutation and over a million times fewer than SAGE. The gap widens with $p$.
 
-Forward-pass counts may understate the practical wall-clock advantage because
-EDEF's passes can be fully vectorized over observations while permutation and
-SAGE run sequentially across features and coalition samples. See the timing
-notebook and the accompanying paper for wall-clock comparisons.
+Forward-pass counts may understate the practical wall-clock advantage because EDEF's passes can be fully vectorized over observations while permutation and SAGE run sequentially across features and coalition samples. See the timing notebook and the accompanying paper for wall-clock comparisons.
 
-For linear models, EDEF is closed form and requires no model evaluations at
-all. For tree models and PyTorch models, wall-clock times are similar: the
-dominant cost for tree models is the TreeIG path traversal rather than model
-forward passes, and both complete attribution for thousands of observations on
-a typical model in well under a second.
+For linear models, EDEF is closed form and requires no model evaluations at all. For tree models and PyTorch models, wall-clock times are similar: the dominant cost for tree models is the TreeIG path traversal rather than model forward passes, and both complete attribution for thousands of observations on a typical model in well under a second.
 
 ## Statistical inference
 
-Because EDEF computes a contribution $\phi_j(x_i)$ for each feature and each
-observation, feature importances are sample averages:
+Because EDEF computes a contribution $\phi_j(x_i)$ for each feature and each observation, feature importances are sample averages:
 
 $$\bar\phi_j = \frac{1}{n} \sum_{i=1}^n \phi_j(x_i).$$
 
 Sample averages have standard errors. EDEF reports them:
 
-$$\widehat{\text{se}}(\bar\phi_j)
-= \frac{1}{\sqrt{n}} \text{sd}\bigl(\phi_j(x_1), \ldots, \phi_j(x_n)\bigr).$$
+$$\widehat{\text{se}}(\bar\phi_j) = \frac{1}{\sqrt{n}} \text{sd}\bigl(\phi_j(x_1), \ldots, \phi_j(x_n)\bigr).$$
 
-Standard errors unlock inference that most attribution methods cannot provide:
-t-statistics to test whether a feature's contribution is distinguishable from
-zero, standard errors on grouped contributions, and uncertainty quantification
-across resampled evaluation sets. In settings where prediction accuracy is
-itself the quantity of scientific interest — rather than a prediction to be
-explained — these inferential outputs are as important as the point estimates.
+Standard errors unlock inference that most attribution methods cannot provide: t-statistics to test whether a feature's contribution is distinguishable from zero, standard errors on grouped contributions, and uncertainty quantification across resampled evaluation sets. In settings where prediction accuracy is itself the quantity of scientific interest — rather than a prediction to be explained — these inferential outputs are as important as the point estimates.
 
 ## Relation to other methods
 
-SHAP and Integrated Gradients explain predictions. EDEF and SAGE explain
-realized model fit. These are fundamentally different attribution targets.
+SHAP and Integrated Gradients explain predictions. EDEF and SAGE explain realized model fit. These are fundamentally different attribution targets.
 
 **SHAP and Integrated Gradients** ask:
 > "How much does feature $j$ contribute to the prediction?"
@@ -194,12 +141,7 @@ realized model fit. These are fundamentally different attribution targets.
 **EDEF and SAGE** ask:
 > "How much does feature $j$ contribute to realized predictive accuracy?"
 
-The table below positions EDEF against the main alternatives along six
-dimensions. The columns record what each method attributes; whether the method
-holds the model fixed at realized inputs or evaluates it at counterfactual
-ones; scope (local per-observation, aggregated-local, or global); whether
-natural standard errors are available without resampling; and the process by
-which importance is allocated.
+The table below positions EDEF against the main alternatives along six dimensions. The columns record what each method attributes; whether the method holds the model fixed at realized inputs or evaluates it at counterfactual ones; scope (local per-observation, aggregated-local, or global); whether natural standard errors are available without resampling; and the process by which importance is allocated.
 
 | Method | Attributes | Model fixed | Realized inputs only | Scope | Nat. SEs | Process |
 |:---|:---|:---:|:---:|:---|:---:|:---|
@@ -210,43 +152,21 @@ which importance is allocated.
 | SAGE | Accuracy | — | — | Global | — | Discrete averaging |
 | **EDEF** | **Accuracy** | **✓** | **✓** | **Global** | **✓** | **Continuous path** |
 
-*Model fixed*: the method conditions on the deployed model at realized inputs,
-without counterfactual feature removal, marginalization, or perturbation.
-*Realized inputs only*: the model is evaluated only at inputs derivable as
-convex combinations of actual observations, requiring no synthetic inputs.
-*Nat. SEs*: standard errors reflecting sampling variation, not Monte Carlo
-approximation error.
+*Model fixed*: the method conditions on the deployed model at realized inputs, without counterfactual feature removal, marginalization, or perturbation. *Realized inputs only*: the model is evaluated only at inputs derivable as convex combinations of actual observations, requiring no synthetic inputs. *Nat. SEs*: standard errors reflecting sampling variation, not Monte Carlo approximation error.
 
 ### Integrated Gradients
 
 Integrated Gradients computes $\phi_j = (x_j - x_{0,j}) \int_0^1 \partial f(x(t))/\partial x_j dt$ — the integral of the prediction gradient along the path from $x_0$ to $x$. EDEF computes the integral of the loss gradient along the same path. They share a path, a baseline, and an integration method. They differ in exactly one thing: what is integrated.
 
-That difference in the integrand is the full story. IG measures how much each
-feature moved the prediction as we interpolate from baseline to observation.
-EDEF measures how much each feature improved or worsened predictive accuracy
-as we make that same interpolation. For a perfect prediction, IG and EDEF
-give the same sign for every feature. For a poor prediction, features that
-moved the prediction in the wrong direction get negative EDEF attribution
-even if they get large positive IG attribution.
+That difference in the integrand is the full story. IG measures how much each feature moved the prediction as we interpolate from baseline to observation. EDEF measures how much each feature improved or worsened predictive accuracy as we make that same interpolation. For a perfect prediction, IG and EDEF give the same sign for every feature. For a poor prediction, features that moved the prediction in the wrong direction get negative EDEF attribution even if they get large positive IG attribution.
 
-For a linear model with zero intercept and zero baseline, EDEF and IG agree in
-sign but differ in magnitude, with EDEF attributions scaled by the accuracy of
-the prediction. As predictions become less accurate, the two methods diverge.
+For a linear model with zero intercept and zero baseline, EDEF and IG agree in sign but differ in magnitude, with EDEF attributions scaled by the accuracy of the prediction. As predictions become less accurate, the two methods diverge.
 
 ### SHAP
 
-SHAP builds attributions from discrete feature inclusion effects averaged over
-coalitions of other features. It does not follow a path and does not observe
-realized outcomes. A feature can receive large SHAP importance purely because
-it moves predictions strongly, regardless of whether those prediction movements
-correspond to actual patterns in the outcome variable.
+SHAP builds attributions from discrete feature inclusion effects averaged over coalitions of other features. It does not follow a path and does not observe realized outcomes. A feature can receive large SHAP importance purely because it moves predictions strongly, regardless of whether those prediction movements correspond to actual patterns in the outcome variable.
 
-SHAP's coalition construction is deliberately indifferent to whether predictions
-are accurate. The same coalition structure, the same expected-prediction
-baseline, and the same discrete inclusion/exclusion logic apply whether the
-model generalizes well or poorly. This makes SHAP a precise tool for
-explaining the model's behavior in input space, and an imprecise tool for
-evaluating that behavior against realized outcomes.
+SHAP's coalition construction is deliberately indifferent to whether predictions are accurate. The same coalition structure, the same expected-prediction baseline, and the same discrete inclusion/exclusion logic apply whether the model generalizes well or poorly. This makes SHAP a precise tool for explaining the model's behavior in input space, and an imprecise tool for evaluating that behavior against realized outcomes.
 
 ### Permutation and perturbation methods
 
@@ -254,54 +174,21 @@ Permutation importance — available in scikit-learn as `permutation_importance`
 
 Permutation methods can target either predictive accuracy or predictions, depending on the scoring function used. The most common application — measuring the drop in model performance when a feature's values are shuffled — is a fit-based method and sits in the same camp as SAGE and EDEF. Permutation-based SHAP, by contrast, uses permutation sampling to estimate prediction attributions. The discussion below concerns the fit-based variant. It differs from EDEF in three ways.
 
-First, permutation methods evaluate the model at counterfactual inputs.
-Shuffling feature $j$ creates (feature, outcome) pairs that never occurred
-in the data. Whether those pairs are meaningful depends on the joint
-distribution of features; correlation with other features means the shuffled
-inputs may fall far outside the model's training support. EDEF evaluates the
-model only at convex combinations of two real inputs — no synthetic feature
-combinations are introduced.
+First, permutation methods evaluate the model at counterfactual inputs. Shuffling feature $j$ creates (feature, outcome) pairs that never occurred in the data. Whether those pairs are meaningful depends on the joint distribution of features; correlation with other features means the shuffled inputs may fall far outside the model's training support. EDEF evaluates the model only at convex combinations of two real inputs — no synthetic feature combinations are introduced.
 
-Second, permutation methods produce a single importance score per feature
-with no natural observation-level decomposition. Standard errors, when
-reported, reflect Monte Carlo variance across permutation draws — not the
-sampling variation across observations that EDEF's standard errors capture.
+Second, permutation methods produce a single importance score per feature with no natural observation-level decomposition. Standard errors, when reported, reflect Monte Carlo variance across permutation draws — not the sampling variation across observations that EDEF's standard errors capture.
 
-Third, permutation importance answers a counterfactual question about feature
-removal: "how much worse would accuracy be if the model could not see feature
-$j$?" EDEF answers a realized question about feature contribution: "how much
-did feature $j$ contribute to accuracy on these observations, given the
-predictions the model actually made?" The two questions have the same answer
-for independent features in large samples and can diverge substantially when
-features are correlated or when model accuracy varies across the sample.
+Third, permutation importance answers a counterfactual question about feature removal: "how much worse would accuracy be if the model could not see feature $j$?" EDEF answers a realized question about feature contribution: "how much did feature $j$ contribute to accuracy on these observations, given the predictions the model actually made?" The two questions have the same answer for independent features in large samples and can diverge substantially when features are correlated or when model accuracy varies across the sample.
 
 ### SAGE
 
-SAGE is the closest existing method to EDEF in motivation. Both measure feature
-contributions to realized predictive performance rather than to predictions.
-They differ substantially in construction.
+SAGE is the closest existing method to EDEF in motivation. Both measure feature contributions to realized predictive performance rather than to predictions. They differ substantially in construction.
 
-SAGE applies Shapley-style coalition averaging to predictive performance: it
-measures how much each feature changes expected loss as it enters or leaves a
-coalition, where absent features are marginalized over a background
-distribution. The SAGE attribution for feature $j$ asks "how much worse would
-the model perform if it could not use feature $j$?" — a global counterfactual
-question about feature removal.
+SAGE applies Shapley-style coalition averaging to predictive performance: it measures how much each feature changes expected loss as it enters or leaves a coalition, where absent features are marginalized over a background distribution. The SAGE attribution for feature $j$ asks "how much worse would the model perform if it could not use feature $j$?" — a global counterfactual question about feature removal.
 
-EDEF asks "how much did feature $j$ contribute to the loss reduction for this
-observation, along the specific path from baseline to observation?" — a local
-path-integral question about feature movement. The difference is analogous to
-the difference between SHAP and IG: Shapley-style marginalizing out features
-versus path-integral accumulation of gradient contributions.
+EDEF asks "how much did feature $j$ contribute to the loss reduction for this observation, along the specific path from baseline to observation?" — a local path-integral question about feature movement. The difference is analogous to the difference between SHAP and IG: Shapley-style marginalizing out features versus path-integral accumulation of gradient contributions.
 
-Three practical consequences follow. First, EDEF requires only a baseline
-vector; SAGE requires a background distribution from which to marginalize out
-features. Second, EDEF computes observation-level contributions that aggregate
-naturally to sample-average importances with standard errors; SAGE produces
-global importance estimates without natural observation-level decompositions.
-Third, EDEF exploits closed-form path integrals and exact tree path traces for
-efficient computation; SAGE currently lacks analogous backend optimizations
-and can be expensive for large models.
+Three practical consequences follow. First, EDEF requires only a baseline vector; SAGE requires a background distribution from which to marginalize out features. Second, EDEF computes observation-level contributions that aggregate naturally to sample-average importances with standard errors; SAGE produces global importance estimates without natural observation-level decompositions. Third, EDEF exploits closed-form path integrals and exact tree path traces for efficient computation; SAGE currently lacks analogous backend optimizations and can be expensive for large models.
 
 ## Available explainers
 
@@ -336,14 +223,11 @@ and can be expensive for large models.
 - `xgboost.XGBRegressor`, `xgboost.XGBClassifier`, `xgboost.Booster`
 - `lightgbm.LGBMRegressor`, `lightgbm.LGBMClassifier`, `lightgbm.Booster`
 
-Tree classification uses raw margins/logits rather than predicted
-probabilities. Probabilities are not additive across trees.
+Tree classification uses raw margins/logits rather than predicted probabilities. Probabilities are not additive across trees.
 
 ### Numerical black-box models
 
-Any model with `predict(X)` (regression) or `predict_proba(X)`
-(classification), including sklearn pipelines and `MLPRegressor`/
-`MLPClassifier`.
+Any model with `predict(X)` (regression) or `predict_proba(X)` (classification), including sklearn pipelines and `MLPRegressor`/ `MLPClassifier`.
 
 ## Not currently supported
 
@@ -386,11 +270,7 @@ explainer = edef.TreeExplainer(model, baseline=X.mean(axis=0), loss="squared_err
 result = explainer(X_eval, y_eval)
 ```
 
-EDEF uses TreeIG to find the exact sequence of split-crossing events along
-the interpolation path for each observation. Each crossing changes the
-prediction, which changes the loss. EDEF assigns the loss change at each
-crossing to the crossing feature. The result is exact — no quadrature,
-no approximation parameters.
+EDEF uses TreeIG to find the exact sequence of split-crossing events along the interpolation path for each observation. Each crossing changes the prediction, which changes the loss. EDEF assigns the loss change at each crossing to the crossing feature. The result is exact — no quadrature, no approximation parameters.
 
 ### Tree classification
 
@@ -403,9 +283,7 @@ explainer = edef.TreeExplainer(model, baseline=X.mean(axis=0), loss="log_loss")
 result = explainer(X_eval, y_eval)
 ```
 
-For multiclass models, use `loss="multiclass_log_loss"`. EDEF merges the
-split-crossing sequences across all class-margin trees, applying exact softmax
-log-loss changes at each event.
+For multiclass models, use `loss="multiclass_log_loss"`. EDEF merges the split-crossing sequences across all class-margin trees, applying exact softmax log-loss changes at each event.
 
 ### PyTorch models
 
@@ -448,10 +326,7 @@ result = explainer(X_eval, y_eval)
 grouped = result.group(["signal", "signal", "noise"])
 ```
 
-Grouped contributions preserve exact additivity. Group labels map input
-features to named groups; features sharing a label are summed. This is
-useful for one-hot encoded variables, embedding blocks, factor groups, and
-hierarchical feature structures.
+Grouped contributions preserve exact additivity. Group labels map input features to named groups; features sharing a label are summed. This is useful for one-hot encoded variables, embedding blocks, factor groups, and hierarchical feature structures.
 
 
 ## Accessing results
@@ -477,13 +352,11 @@ import shap
 shap.plots.beeswarm(shap_exp)
 ```
 
-The underlying values are EDEF realized-fit contributions. The SHAP plotting
-interface is used for visualization only.
+The underlying values are EDEF realized-fit contributions. The SHAP plotting interface is used for visualization only.
 
 ## Project status
 
-EDEF covers the dominant regression and classification models in the Python
-ecosystem with exact or high-accuracy decompositions:
+EDEF covers the dominant regression and classification models in the Python ecosystem with exact or high-accuracy decompositions:
 
 - closed-form exact attribution for linear models;
 - autograd path integration for PyTorch models;
