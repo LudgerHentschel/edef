@@ -141,10 +141,11 @@ class EDEFExplanation:
         se = self.standard_errors.copy()
         names = np.asarray(self.feature_names, dtype=object)
 
-        order = np.argsort(np.abs(values))[::-1]
+        order = np.arange(len(values))
+        
         if sort:
-            order = np.argsort(values)[::-1]
-
+            order = np.argsort(np.abs(values))[::-1]
+        
         if max_features is not None:
             order = order[:max_features]
 

@@ -80,6 +80,7 @@ class NumericalExplainer:
         self.n_steps = int(n_steps)
         self.step_size = float(step_size)
         self.feature_names = feature_names
+        self._nodes, self._weights = _gauss_legendre_nodes_weights(self.n_steps)
 
     def __call__(
         self,
@@ -146,7 +147,8 @@ class NumericalExplainer:
         X0 = np.broadcast_to(baseline.reshape(1, -1), X.shape).copy()
         delta_X = X - X0
 
-        nodes, weights = _gauss_legendre_nodes_weights(self.n_steps)
+        nodes = self._nodes
+        weights = self._weights
 
         observation_values = np.zeros((n_obs, n_features), dtype=float)
 
@@ -193,23 +195,33 @@ class NumericalExplainer:
 
     def _finite_difference_loss_gradient(self, X, y):
         n_obs, n_features = X.shape
-        grad = np.empty_like(X, dtype=float)
         h = self.step_size
 
-        for j in range(n_features):
-            X_plus = X.copy()
-            X_minus = X.copy()
+        eye = np.eye(n_features, dtype=float) * h
 
-            X_plus[:, j] += h
-            X_minus[:, j] -= h
+        X_plus = (
+            X[:, None, :]
+            + eye[None, :, :]
+        ).reshape(n_obs * n_features, n_features)
 
-            loss_plus = self._loss_per_observation(X_plus, y)
-            loss_minus = self._loss_per_observation(X_minus, y)
+        X_minus = (
+            X[:, None, :]
+            - eye[None, :, :]
+        ).reshape(n_obs * n_features, n_features)
 
-            grad[:, j] = (loss_plus - loss_minus) / (2.0 * h)
+        y_rep = np.repeat(y, n_features)
+
+        loss_plus = self._loss_per_observation(X_plus, y_rep)
+        loss_minus = self._loss_per_observation(X_minus, y_rep)
+
+        grad = (
+            (loss_plus - loss_minus)
+            .reshape(n_obs, n_features)
+            / (2.0 * h)
+        )
 
         return grad
-
+        
     def _loss_per_observation(self, X, y):
         if self.loss == "squared_error":
             pred = self._predict_regression(X)

@@ -58,6 +58,7 @@ class TreeExplainer:
         feature_names=None,
         target=None,
         time_tol: float = 1e-10,
+        n_classes=None,
     ):
         if loss not in {"squared_error", "log_loss", "multiclass_log_loss"}:
             raise ValueError(
@@ -73,17 +74,15 @@ class TreeExplainer:
         self.feature_names = feature_names
         self.target = target
         self.time_tol = time_tol
+        self.n_classes = n_classes
         self._TreeIG = TreeIG
-        
+
+        self._treeig_by_target = {}
+
         if loss == "multiclass_log_loss":
             self._treeig = None
         else:
-            self._treeig = TreeIG(
-                model,
-                baseline=baseline,
-                target=target,
-                time_tol=time_tol,
-            )
+            self._treeig = self._get_treeig(target)
 
     def __call__(
         self,
@@ -129,15 +128,7 @@ class TreeExplainer:
             if not np.all((y == 0.0) | (y == 1.0)):
                 raise ValueError("y must contain only binary labels in {0, 1}.")
 
-        names = feature_names
-        if names is None:
-            names = self.feature_names
-        if names is None:
-            names = [f"x{i}" for i in range(n_features)]
-        else:
-            names = list(names)
-            if len(names) != n_features:
-                raise ValueError("feature_names must have length n_features.")
+        names = self._resolve_feature_names(feature_names, n_features)
 
         trace = self._treeig.trace(X, target=self.target)
 
@@ -244,34 +235,26 @@ class TreeExplainer:
         if np.any(y < 0):
             raise ValueError("y must contain nonnegative class labels.")
 
-        n_classes = int(np.max(y)) + 1
+        n_classes = self._resolve_n_classes()
 
         if n_classes < 2:
             raise ValueError("multiclass_log_loss requires at least two classes.")
 
-        names = feature_names
-        if names is None:
-            names = self.feature_names
-        if names is None:
-            names = [f"x{i}" for i in range(n_features)]
-        else:
-            names = list(names)
-            if len(names) != n_features:
-                raise ValueError("feature_names must have length n_features.")
+        if np.max(y) >= n_classes:
+            raise ValueError("y contains class labels outside n_classes.")
+
+        names = self._resolve_feature_names(feature_names, n_features)
 
         traces = []
         baseline_scores = np.zeros(n_classes, dtype=float)
         endpoint_scores = np.zeros((n_obs, n_classes), dtype=float)
 
         for k in range(n_classes):
-            treeig_k = self._TreeIG(
-                self.model,
-                baseline=self.baseline,
-                target=k,
-                time_tol=self.time_tol,
-            )
+            treeig_k = self._get_treeig(k)
             trace_k = treeig_k.trace(X, target=k)
+
             traces.append(trace_k)
+
             baseline_scores[k] = float(trace_k["baseline_prediction"])
             endpoint_scores[:, k] = np.asarray(
                 trace_k["endpoint_prediction"],
@@ -309,6 +292,13 @@ class TreeExplainer:
 
                 if feature_index >= 0:
                     observation_values[i, feature_index] += contribution
+
+            np.testing.assert_allclose(
+                current_scores,
+                endpoint_scores[i],
+                atol=atol,
+                rtol=0.0,
+            )
 
         values = observation_values.mean(axis=0)
         standard_errors = observation_values.std(axis=0, ddof=1) / np.sqrt(n_obs)
@@ -351,3 +341,45 @@ class TreeExplainer:
             n_obs=n_obs,
             additivity_error=additivity_error,
         )
+
+    def _get_treeig(self, target):
+        key = None if target is None else int(target)
+
+        if key not in self._treeig_by_target:
+            self._treeig_by_target[key] = self._TreeIG(
+                self.model,
+                baseline=self.baseline,
+                target=key,
+                time_tol=self.time_tol,
+            )
+
+        return self._treeig_by_target[key]
+
+    def _resolve_n_classes(self) -> int:
+        if self.n_classes is not None:
+            return int(self.n_classes)
+
+        classes = getattr(self.model, "classes_", None)
+
+        if classes is not None:
+            return int(len(classes))
+
+        raise ValueError(
+            "multiclass_log_loss requires n_classes or a model with classes_."
+        )
+
+    def _resolve_feature_names(self, feature_names, n_features: int) -> list[str]:
+        names = feature_names
+
+        if names is None:
+            names = self.feature_names
+
+        if names is None:
+            return [f"x{i}" for i in range(n_features)]
+
+        names = list(names)
+
+        if len(names) != n_features:
+            raise ValueError("feature_names must have length n_features.")
+
+        return names

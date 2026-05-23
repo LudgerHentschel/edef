@@ -4,17 +4,83 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "edef"
-version = "0.0.1"
-description = "Euler Decomposition of Explained Fit"
+version = "0.1.0"
+description = "Euler Decomposition of Explained Fit: additive feature attribution for realized predictive performance"
+readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "BSD-3-Clause" }
+authors = [
+    { name = "Ludger Hentschel" }
+]
+keywords = [
+    "feature attribution",
+    "feature importance",
+    "model fit",
+    "machine learning",
+    "explainability",
+    "integrated gradients",
+    "SHAP",
+    "SAGE",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+    "numpy>=1.23",
+]
+
+[project.urls]
+Homepage = "https://github.com/LudgerHentschel/edef"
+Repository = "https://github.com/LudgerHentschel/edef"
+Issues = "https://github.com/LudgerHentschel/edef/issues"
+
+[project.optional-dependencies]
+linear = [
+    "scikit-learn",
+]
+torch = [
+    "torch",
+]
+tree = [
+    "treeig",
+]
+numerical = [
+    "scikit-learn",
+]
+plots = [
+    "matplotlib",
+    "pandas",
+    "shap",
+]
+dev = [
+    "pytest",
+    "scikit-learn",
+    "matplotlib",
+    "pandas",
+    "shap",
+]
+all = [
+    "torch",
+    "treeig",
+    "scikit-learn",
+    "matplotlib",
+    "pandas",
+    "shap",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[project.optional-dependencies]
-torch = ["torch"]
-dev = ["pytest", "scikit-learn"]
-all = ["torch", "pytest", "scikit-learn"]

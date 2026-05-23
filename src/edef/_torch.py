@@ -68,6 +68,8 @@ class TorchExplainer:
         self.device = device
         self.dtype = dtype
 
+        self._nodes, self._weights = _gauss_legendre_nodes_weights(self.n_steps)
+
     def __call__(
         self,
         X,
@@ -118,7 +120,8 @@ class TorchExplainer:
         X0_t = baseline_t.reshape(1, -1).expand_as(X_t)
         delta_X = X_t - X0_t
 
-        nodes, weights = _gauss_legendre_nodes_weights(self.n_steps)
+        nodes = self._nodes
+        weights = self._weights
 
         c_t = torch.zeros_like(X_t)
 

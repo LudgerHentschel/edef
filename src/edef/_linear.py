@@ -626,12 +626,21 @@ def linear_multiclass_components(
     nodes = 0.5 * (nodes + 1.0)
     weights = 0.5 * weights
 
-    avg_prob = np.zeros((n_obs, n_classes), dtype=float)
+    eta_all = (
+        eta_bar.reshape(1, 1, -1)
+        + nodes.reshape(-1, 1, 1) * delta.reshape(1, n_obs, n_classes)
+    )
 
-    for node, weight in zip(nodes, weights):
-        eta_t = eta_bar.reshape(1, -1) + float(node) * delta
-        avg_prob += float(weight) * _softmax(eta_t)
+    eta_all = eta_all - eta_all.max(axis=2, keepdims=True)
 
+    prob_all = np.exp(eta_all)
+    prob_all = prob_all / prob_all.sum(axis=2, keepdims=True)
+
+    avg_prob = np.sum(
+        weights.reshape(-1, 1, 1) * prob_all,
+        axis=0,
+    )
+    
     one_hot = np.zeros((n_obs, n_classes), dtype=float)
     one_hot[np.arange(n_obs), y] = 1.0
 
