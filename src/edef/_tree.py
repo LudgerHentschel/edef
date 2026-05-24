@@ -91,7 +91,7 @@ class TreeExplainer:
         *,
         feature_names=None,
         check_additivity: bool = True,
-        atol: float = 1e-8,
+        atol: float = 1e-5,  # many tree models use float32 internals
     ) -> EDEFExplanation:
         X = np.asarray(X, dtype=float)
         y = np.asarray(y).reshape(-1)
@@ -129,6 +129,52 @@ class TreeExplainer:
                 raise ValueError("y must contain only binary labels in {0, 1}.")
 
         names = self._resolve_feature_names(feature_names, n_features)
+
+        if self.loss in {"squared_error", "log_loss"} and hasattr(
+            self._treeig,
+            "loss_attribution",
+        ):
+            out = self._treeig.loss_attribution(
+                X,
+                y,
+                loss=self.loss,
+                target=self.target,
+            )
+
+            values = out["values"]
+            observation_values = out["observation_values"]
+            standard_errors = out["standard_errors"]
+            baseline_loss = out["baseline_loss"]
+            model_loss = out["model_loss"]
+            total = out["total"]
+
+            additivity_error = values.sum() - total
+
+            if check_additivity and abs(additivity_error) > atol:
+                raise RuntimeError(
+                    "EDEF contributions do not add to total fit improvement. "
+                    f"Additivity error: {additivity_error}"
+                )
+
+            model_type = (
+                "tree_regression"
+                if self.loss == "squared_error"
+                else "tree_classification"
+            )
+
+            return EDEFExplanation(
+                values=values,
+                observation_values=observation_values,
+                standard_errors=standard_errors,
+                total=total,
+                baseline_loss=baseline_loss,
+                model_loss=model_loss,
+                loss=self.loss,
+                model_type=model_type,
+                feature_names=names,
+                n_obs=n_obs,
+                additivity_error=additivity_error,
+            )
 
         trace = self._treeig.trace(X, target=self.target)
 
