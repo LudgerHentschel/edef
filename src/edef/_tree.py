@@ -291,6 +291,44 @@ class TreeExplainer:
 
         names = self._resolve_feature_names(feature_names, n_features)
 
+        treeig0 = self._get_treeig(0)
+
+        if hasattr(treeig0, "multiclass_loss_attribution"):
+            out = treeig0.multiclass_loss_attribution(
+                X,
+                y,
+                n_classes=n_classes,
+            )
+
+            values = out["values"]
+            observation_values = out["observation_values"]
+            standard_errors = out["standard_errors"]
+            baseline_loss = out["baseline_loss"]
+            model_loss = out["model_loss"]
+            total = out["total"]
+
+            additivity_error = values.sum() - total
+
+            if check_additivity and abs(additivity_error) > atol:
+                raise RuntimeError(
+                    "EDEF contributions do not add to total fit improvement. "
+                    f"Additivity error: {additivity_error}"
+                )
+
+            return EDEFExplanation(
+                values=values,
+                observation_values=observation_values,
+                standard_errors=standard_errors,
+                total=total,
+                baseline_loss=baseline_loss,
+                model_loss=model_loss,
+                loss="multiclass_log_loss",
+                model_type="tree_multiclass_classification",
+                feature_names=names,
+                n_obs=n_obs,
+                additivity_error=additivity_error,
+            )
+
         traces = []
         baseline_scores = np.zeros(n_classes, dtype=float)
         endpoint_scores = np.zeros((n_obs, n_classes), dtype=float)
