@@ -14,6 +14,8 @@ EDEF applies the integrated-gradients framework of Sundararajan, Taly, and Yan (
 
 ## Installation
 
+Requires Python ≥ 3.9, NumPy, and Numba.
+
 ```bash
 pip install edef
 ```
