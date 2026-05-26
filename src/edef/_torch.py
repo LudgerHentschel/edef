@@ -16,6 +16,7 @@ def _require_torch():
 
 
 def _gauss_legendre_nodes_weights(n_steps: int):
+    n_steps = int(n_steps)
     if n_steps < 1:
         raise ValueError("n_steps must be positive.")
 
@@ -30,16 +31,67 @@ def _gauss_legendre_nodes_weights(n_steps: int):
 
 class TorchExplainer:
     """
-    Path-integral EDEF explainer for smooth PyTorch regression models.
+    Path-integral EDEF explainer for differentiable PyTorch models.
 
-    Version 1 supports:
-    - scalar regression output;
-    - squared-error loss;
-    - fixed baseline vector;
-    - Gauss-Legendre quadrature;
-    - observation-level feature contributions.
+    ``TorchExplainer`` computes an Euler Decomposition of Explained Fit
+    (EDEF) by integrating loss gradients along the straight-line path from a
+    fixed baseline input to each evaluation input. The resulting feature
+    contributions decompose average loss reduction from the baseline
+    prediction to the model prediction.
+
+    Version 1 supports squared-error regression, binary log-loss
+    classification, and multiclass log-loss classification. Binary and
+    multiclass classification use logits or raw class scores, not probability
+    outputs.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        Fitted PyTorch model. The model must map an input tensor of shape
+        ``(n_obs, n_features)`` to outputs compatible with ``loss``. The
+        explainer temporarily switches the model to evaluation mode during
+        attribution and restores training mode afterward if needed.
+
+    baseline : array-like or torch.Tensor of shape (n_features,)
+        Numeric baseline input used as the starting point for each path.
+
+    loss : {"squared_error", "log_loss", "multiclass_log_loss"}, default="squared_error"
+        Loss function whose reduction is decomposed. ``"log_loss"`` expects
+        binary labels and scalar logits. ``"multiclass_log_loss"`` expects
+        integer class labels and class-score/logit outputs.
+
+    n_steps : int, default=50
+        Number of Gauss-Legendre quadrature nodes used to approximate the path
+        integral.
+
+    feature_names : sequence of str, optional
+        Default feature names used in returned EDEF results.
+
+    device : torch.device or str, optional
+        Device to which inputs and the baseline are moved before attribution.
+        If omitted, PyTorch's default behavior is used for newly created
+        tensors, and existing tensors remain on their current device.
+
+    dtype : torch.dtype, optional
+        Floating-point dtype used for inputs and the baseline. If omitted,
+        non-floating inputs are converted to ``torch.float32``.
+
+    When to use
+    -----------
+    Use ``TorchExplainer`` for differentiable PyTorch models when automatic
+    differentiation is available and path-integral attribution is desired.
+
+    Notes
+    -----
+    EDEF is computed for the fixed fitted model. The explainer does not refit
+    the model, remove features, or evaluate counterfactual model
+    specifications.
+
+    The path integral is approximated numerically. Increasing ``n_steps`` may
+    reduce quadrature error for highly nonlinear models, at additional
+    computational cost.
     """
-
+    
     def __init__(
         self,
         model,
@@ -51,12 +103,37 @@ class TorchExplainer:
         device=None,
         dtype=None,
     ):
+        """
+        Initialize a PyTorch EDEF explainer.
 
+        Parameters
+        ----------
+        model : torch.nn.Module
+            Fitted PyTorch model.
+
+        baseline : array-like or torch.Tensor of shape (n_features,)
+            Numeric baseline input.
+
+        loss : {"squared_error", "log_loss", "multiclass_log_loss"}, default="squared_error"
+            Loss function whose reduction is decomposed.
+
+        n_steps : int, default=50
+            Number of Gauss-Legendre quadrature nodes.
+
+        feature_names : sequence of str, optional
+            Default feature names for reported feature contributions.
+
+        device : torch.device or str, optional
+            Device used for attribution tensors.
+
+        dtype : torch.dtype, optional
+            Floating-point dtype used for attribution tensors.
+        """
+        
         if loss not in {"squared_error", "log_loss", "multiclass_log_loss"}:
             raise ValueError(
                 "TorchExplainer supports squared_error, log_loss, and multiclass_log_loss."
             )
-
 
         self.torch = _require_torch()
 
@@ -79,6 +156,62 @@ class TorchExplainer:
         check_additivity: bool = True,
         atol: float = 1e-6,
     ) -> EDEFExplanation:
+        """
+        Compute the path-integral EDEF decomposition for evaluation data.
+
+        Parameters
+        ----------
+        X : array-like or torch.Tensor of shape (n_obs, n_features)
+            Evaluation feature matrix.
+
+        y : array-like or torch.Tensor of shape (n_obs,)
+            Observed outcomes or class labels. For ``loss="squared_error"``,
+            values are interpreted as numeric outcomes. For ``loss="log_loss"``,
+            labels must be binary values in ``{0, 1}``. For
+            ``loss="multiclass_log_loss"``, labels must be nonnegative integer
+            class indices.
+
+        feature_names : sequence of str, optional
+            Feature names used in the returned explanation. If omitted, names
+            supplied at construction are used. If neither is supplied, names
+            are generated as ``"x0"``, ``"x1"``, and so on.
+
+        check_additivity : bool, default=True
+            Whether to verify that average feature contributions reconstruct
+            total average loss reduction up to numerical tolerance.
+
+        atol : float, default=1e-6
+            Absolute tolerance used for the additivity check.
+
+        Returns
+        -------
+        explanation : EDEFExplanation
+            Explanation object containing average feature contributions,
+            observation-level feature contributions, standard errors, total
+            loss reduction, baseline loss, model loss, feature names, sample
+            size, and additivity error.
+
+        Notes
+        -----
+        The returned ``values`` satisfy, up to quadrature and floating-point
+        error,
+
+            values.sum() = baseline_loss - model_loss
+
+        where losses are averaged over the evaluation sample.
+
+        During attribution, the model is evaluated in ``eval`` mode. If the
+        model was in training mode before the call, that state is restored
+        afterward.
+
+        Examples
+        --------
+        >>> from edef import TorchExplainer
+        >>> explainer = TorchExplainer(model, baseline=x0, loss="squared_error")
+        >>> explanation = explainer(X_test, y_test)
+        >>> explanation.values
+        """
+        
         torch = self.torch
 
         X_t = self._as_tensor(X)
@@ -178,7 +311,7 @@ class TorchExplainer:
 
         if check_additivity and abs(additivity_error_f) > atol:
             raise RuntimeError(
-                "EDEF contributions do not add to total fit improvement. "
+                "EDEF contributions do not add to total loss reduction. "
                 f"Additivity error: {additivity_error_f}"
             )
 
@@ -203,6 +336,7 @@ class TorchExplainer:
         )
 
     def _as_tensor(self, x):
+        """Convert input to a tensor using the explainer dtype and device."""
         torch = self.torch
 
         if isinstance(x, torch.Tensor):
@@ -221,6 +355,7 @@ class TorchExplainer:
         return out
 
     def _baseline_tensor(self, n_features: int, X_t):
+        """Return the prepared baseline tensor aligned with ``X_t``."""
         torch = self.torch
 
         baseline = self.baseline
@@ -242,6 +377,7 @@ class TorchExplainer:
         return b.to(device=X_t.device, dtype=X_t.dtype)
 
     def _predict_output(self, X_t):
+        """Evaluate the model and validate output shape for the selected loss."""
         pred = self.model(X_t)
 
         if self.loss in {"squared_error", "log_loss"}:
@@ -271,6 +407,7 @@ class TorchExplainer:
         raise RuntimeError(f"Unexpected loss: {self.loss}")        
         
     def _loss_per_observation(self, y_t, pred_t):
+        """Return per-observation loss values for the selected loss."""    
         torch = self.torch
 
         if self.loss == "squared_error":

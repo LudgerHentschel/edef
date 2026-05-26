@@ -1,3 +1,15 @@
+"""
+EDEF: Euler Decomposition of Explained Fit.
+
+Public API
+----------
+LinearExplainer
+TorchExplainer
+TreeExplainer
+NumericalExplainer
+EDEFExplanation
+"""
+
 from ._linear import (
     LinearExplainer,
     linear_logistic_components,

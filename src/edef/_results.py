@@ -6,6 +6,55 @@ import numpy as np
 
 @dataclass
 class EDEFExplanation:
+    """
+    Container for EDEF feature-contribution results.
+
+    ``EDEFExplanation`` stores the output of an Euler Decomposition of
+    Explained Fit. The primary quantities are level contributions: feature
+    values that sum to total average loss reduction, up to numerical error.
+
+    Parameters
+    ----------
+    values : ndarray of shape (n_features,)
+        Average feature contributions to loss reduction.
+
+    observation_values : ndarray of shape (n_obs, n_features)
+        Observation-level feature contributions.
+
+    standard_errors : ndarray of shape (n_features,)
+        Standard errors of ``values``, computed across observations.
+
+    total : float
+        Total average loss reduction, equal to ``baseline_loss - model_loss``.
+
+    baseline_loss : float
+        Average loss at the baseline prediction.
+
+    model_loss : float
+        Average loss at the endpoint model prediction.
+
+    loss : str
+        Loss function used in the decomposition.
+
+    model_type : str
+        Backend/model-type label.
+
+    feature_names : list of str
+        Feature names corresponding to columns of ``values`` and
+        ``observation_values``.
+
+    n_obs : int
+        Number of observations used in the decomposition.
+
+    additivity_error : float, default=0.0
+        Difference between ``values.sum()`` and ``total``.
+
+    Notes
+    -----
+    The level contributions in ``values`` are the main EDEF estimands.
+    Proportions are derived summaries and may be unstable when ``total`` is
+    close to zero.
+    """
     values: np.ndarray
     observation_values: np.ndarray
     standard_errors: np.ndarray
@@ -20,18 +69,44 @@ class EDEFExplanation:
 
     @property
     def proportions(self) -> np.ndarray:
+        """
+        Return feature contributions divided by total loss reduction.
+
+        Returns
+        -------
+        proportions : ndarray of shape (n_features,)
+            ``values / total``. If ``total`` is zero, all entries are ``nan``.
+        """
         if self.total == 0:
             return np.full_like(self.values, np.nan, dtype=float)
         return self.values / self.total
 
     @property
     def t_values(self) -> np.ndarray:
+        """
+        Return contribution t-values.
+
+        Returns
+        -------
+        t_values : ndarray of shape (n_features,)
+            ``values / standard_errors`` where standard errors are positive;
+            ``nan`` otherwise.
+        """
         out = np.full_like(self.values, np.nan, dtype=float)
         mask = self.standard_errors > 0
         out[mask] = self.values[mask] / self.standard_errors[mask]
         return out
 
     def as_dict(self) -> dict:
+        """
+        Return the explanation as a dictionary.
+
+        Returns
+        -------
+        result : dict
+            Dictionary containing stored fields together with derived
+            ``proportions`` and ``t_values``.
+        """
         return {
             "values": self.values,
             "observation_values": self.observation_values,
@@ -49,6 +124,27 @@ class EDEFExplanation:
         }
         
     def group(self, groups) -> "EDEFExplanation":
+        """
+        Aggregate feature contributions into user-specified groups.
+
+        Parameters
+        ----------
+        groups : sequence
+            Group label for each feature. Must have length ``n_features``.
+            Features with the same label are summed observation by observation.
+
+        Returns
+        -------
+        grouped : EDEFExplanation
+            New explanation whose features are the unique group labels in
+            first-occurrence order.
+
+        Notes
+        -----
+        Grouping is performed on ``observation_values`` before recomputing
+        averages and standard errors. This preserves the covariance structure
+        among features within each group.
+        """
         groups = list(groups)
 
         if len(groups) != len(self.feature_names):
@@ -90,10 +186,27 @@ class EDEFExplanation:
 
         
     def to_frame(self, *, sort: bool = True):
+        """
+        Convert feature-level results to a pandas DataFrame.
+
+        Parameters
+        ----------
+        sort : bool, default=True
+            Whether to sort rows by absolute contribution magnitude in
+            descending order.
+
+        Returns
+        -------
+        frame : pandas.DataFrame
+            DataFrame with columns ``feature``, ``value``,
+            ``standard_error``, ``t_value``, and ``proportion``.
+        """
         try:
             import pandas as pd
         except ImportError as exc:
-            raise ImportError("to_frame requires pandas. Install with: pip install pandas") from exc
+            raise ImportError(
+                "to_frame requires pandas. Install with: pip install pandas"
+            ) from exc
 
         out = pd.DataFrame(
             {
@@ -106,10 +219,13 @@ class EDEFExplanation:
         )
 
         if sort:
-            out = out.sort_values("value", ascending=False).reset_index(drop=True)
+            out = (
+                out.iloc[np.argsort(np.abs(out["value"].to_numpy()))[::-1]]
+                .reset_index(drop=True)
+            )
 
         return out
-
+        
     def plot(
         self,
         *,
@@ -119,6 +235,32 @@ class EDEFExplanation:
         max_features: int | None = None,
         ax=None,
     ):
+        """
+        Plot feature-level EDEF contributions.
+
+        Parameters
+        ----------
+        kind : {"bar"}, default="bar"
+            Plot type. Only horizontal bar plots are currently supported.
+
+        alpha : float, default=0.05
+            Two-sided confidence level parameter for normal-approximation
+            error bars.
+
+        sort : bool, default=True
+            Whether to sort features by absolute contribution magnitude.
+
+        max_features : int or None, default=None
+            Maximum number of features to display.
+
+        ax : matplotlib.axes.Axes, optional
+            Existing axes on which to draw the plot.
+
+        Returns
+        -------
+        ax : matplotlib.axes.Axes
+            Axes containing the plot.
+        """
         if kind != "bar":
             raise ValueError("Only kind='bar' is currently supported.")
 
@@ -163,7 +305,7 @@ class EDEFExplanation:
         ax.set_yticklabels(names)
         ax.invert_yaxis()
         ax.axvline(0.0, linewidth=1)
-        ax.set_xlabel("EDEF contribution to fit")
+        ax.set_xlabel("EDEF contribution to loss reduction")
 #        ax.set_title("EDEF feature contributions")
 
         ax.spines["top"].set_visible(False)
@@ -173,6 +315,30 @@ class EDEFExplanation:
 
 
     def to_shap_explanation(self, *, data=None, base_values=None):
+        """
+        Convert observation-level EDEF values to a SHAP Explanation object.
+
+        Parameters
+        ----------
+        data : array-like, optional
+            Optional feature data to attach to the SHAP explanation.
+
+        base_values : array-like or None, default=None
+            Base values supplied to ``shap.Explanation``. If omitted, an array
+            filled with ``baseline_loss`` is used.
+
+        Returns
+        -------
+        explanation : shap.Explanation
+            SHAP-compatible explanation containing EDEF observation-level
+            contributions.
+
+        Notes
+        -----
+        This conversion is for interoperability and visualization. EDEF
+        values decompose loss reduction, not model-output differences, so the
+        resulting object should not be interpreted as ordinary SHAP values.
+        """    
         try:
             import shap
         except ImportError as exc:

@@ -239,6 +239,36 @@ Any model with `predict(X)` (regression) or `predict_proba(X)` (classification),
 
 ## Examples for Different Models
 
+Runnable example scripts are available in [`examples/`](examples/):
+
+- [`linear_regression_basic.py`](examples/linear_regression_basic.py)  
+  Linear regression EDEF decomposition with grouped contributions and
+  additivity diagnostics.
+
+- [`linear_logistic_basic.py`](examples/linear_logistic_basic.py)  
+  Binary logistic regression using log-loss decomposition.
+
+- [`tree_regression_basic.py`](examples/tree_regression_basic.py)  
+  Exact TreeIG-based EDEF decomposition for tree regression models.
+
+- [`tree_classification_basic.py`](examples/tree_classification_basic.py)  
+  Exact TreeIG-based EDEF decomposition for binary and multiclass tree
+  classification models.
+
+- [`torch_regression_basic.py`](examples/torch_regression_basic.py)  
+  Path-integral EDEF decomposition for PyTorch regression models.
+
+- [`torch_classification_basic.py`](examples/torch_classification_basic.py)  
+  Binary and multiclass PyTorch classification with log-loss decomposition.
+
+- [`numerical_regression_basic.py`](examples/numerical_regression_basic.py)  
+  Numerical finite-difference EDEF decomposition for black-box regression
+  models.
+
+- [`numerical_classification_basic.py`](examples/numerical_classification_basic.py)  
+  Numerical finite-difference EDEF decomposition for black-box classification
+  models.
+
 ### Linear regression
 
 ```python
@@ -247,7 +277,15 @@ from sklearn.linear_model import LinearRegression
 import edef
 
 model = LinearRegression().fit(X, y)
-result = edef.LinearExplainer(model, feature_names=["x1", "x2", "x3"])(X, y)
+
+explainer = edef.LinearExplainer(
+    model,
+    feature_names=["x1", "x2", "x3"],
+)
+
+result = explainer(X, y)
+
+print(result.to_frame())
 ```
 
 ### Binary classification
@@ -257,7 +295,14 @@ from sklearn.linear_model import LogisticRegression
 import edef
 
 model = LogisticRegression().fit(X, y)
-result = edef.LinearExplainer(model, loss="log_loss", feature_names=[...])(X, y)
+
+explainer = edef.LinearExplainer(
+    model,
+    loss="log_loss",
+    feature_names=["x1", "x2", "x3"],
+)
+
+result = explainer(X, y)
 ```
 
 ### Tree regression
@@ -266,13 +311,25 @@ result = edef.LinearExplainer(model, loss="log_loss", feature_names=[...])(X, y)
 from sklearn.ensemble import GradientBoostingRegressor
 import edef
 
-model = GradientBoostingRegressor(n_estimators=100, max_depth=3).fit(X, y)
+model = GradientBoostingRegressor(
+    n_estimators=100,
+    max_depth=3,
+).fit(X, y)
 
-explainer = edef.TreeExplainer(model, baseline=X.mean(axis=0), loss="squared_error")
+explainer = edef.TreeExplainer(
+    model,
+    baseline=X.mean(axis=0),
+    loss="squared_error",
+)
+
 result = explainer(X_eval, y_eval)
 ```
 
-EDEF uses TreeIG to find the exact sequence of split-crossing events along the interpolation path for each observation. Each crossing changes the prediction, which changes the loss. EDEF assigns the loss change at each crossing to the crossing feature. The result is exact — no quadrature, no approximation parameters.
+EDEF uses TreeIG to compute the exact sequence of split-crossing events
+along the interpolation path for each observation. Each crossing changes
+the model prediction, which changes the loss. EDEF assigns the resulting
+loss change to the crossing feature. For supported TreeIG models, the
+decomposition is exact up to floating-point error.
 
 ### Tree classification
 
@@ -281,11 +338,19 @@ from sklearn.ensemble import GradientBoostingClassifier
 import edef
 
 model = GradientBoostingClassifier(...).fit(X, y)
-explainer = edef.TreeExplainer(model, baseline=X.mean(axis=0), loss="log_loss")
+
+explainer = edef.TreeExplainer(
+    model,
+    baseline=X.mean(axis=0),
+    loss="log_loss",
+)
+
 result = explainer(X_eval, y_eval)
 ```
 
-For multiclass models, use `loss="multiclass_log_loss"`. EDEF merges the split-crossing sequences across all class-margin trees, applying exact softmax log-loss changes at each event.
+For multiclass models, use `loss="multiclass_log_loss"`. EDEF merges the
+split-crossing sequences across all class-margin trees and applies the
+corresponding softmax log-loss changes at each event.
 
 ### PyTorch models
 
@@ -297,8 +362,9 @@ explainer = edef.TorchExplainer(
     baseline=X_train.mean(axis=0),
     loss="squared_error",   # or "log_loss", "multiclass_log_loss"
     n_steps=50,
-    feature_names=[...],
+    feature_names=["x1", "x2", "x3"],
 )
+
 result = explainer(X_eval, y_eval)
 ```
 
@@ -310,26 +376,63 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 import edef
 
-model = make_pipeline(StandardScaler(), MLPRegressor(...)).fit(X, y)
+model = make_pipeline(
+    StandardScaler(),
+    MLPRegressor(...),
+).fit(X, y)
 
 explainer = edef.NumericalExplainer(
     model,
     baseline=X.mean(axis=0),
     loss="squared_error",
     n_steps=32,
-    feature_names=[...],
+    feature_names=["x1", "x2", "x3"],
 )
+
 result = explainer(X_eval, y_eval)
 ```
 
-## Grouped contributions
+### Grouped contributions
+
+Grouped contributions preserve exact additivity by summing feature-level
+contributions within user-defined groups.
+
+This is useful for:
+
+- one-hot encoded variables;
+- embedding blocks;
+- sector or factor groups;
+- hierarchical feature structures.
 
 ```python
-grouped = result.group(["signal", "signal", "noise"])
+grouped = result.group(
+    ["signal", "signal", "noise"]
+)
+
+print(grouped.to_frame())
 ```
 
-Grouped contributions preserve exact additivity. Group labels map input features to named groups; features sharing a label are summed. This is useful for one-hot encoded variables, embedding blocks, factor groups, and hierarchical feature structures.
+### Explanation utilities
 
+```python
+print(result)
+
+frame = result.to_frame()
+
+ax = result.plot(max_features=10)
+
+shap_values = result.to_shap_explanation(data=X_eval)
+```
+
+The returned `EDEFExplanation` object contains:
+
+- average feature contributions;
+- observation-level contributions;
+- standard errors;
+- t-statistics;
+- proportional contributions;
+- baseline and model losses;
+- additivity diagnostics.
 
 ## Accessing results
 

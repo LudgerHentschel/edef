@@ -41,12 +41,63 @@ def _multiclass_log_loss_one(y_i, scores):
 
 class TreeExplainer:
     """
-    EDEF explainer for tree models using TreeIG path traces.
+    EDEF explainer for supported tree models using TreeIG path traces.
 
-    Supports:
-    - tree regression with squared-error loss;
-    - binary additive-score classification with log loss;
-    - multiclass additive-score classification with softmax log loss.
+    ``TreeExplainer`` computes an Euler Decomposition of Explained Fit
+    (EDEF) for fitted tree-based models by using TreeIG split-crossing traces.
+    The explainer decomposes average loss reduction from the baseline
+    prediction to the model prediction into feature-level contributions.
+
+    Version 1 supports squared-error tree regression, binary log-loss
+    additive-score classification, and multiclass softmax log-loss
+    additive-score classification. Classification is based on raw margins,
+    logits, or class scores, not probability-output attributions.
+
+    Parameters
+    ----------
+    model : object
+        Fitted tree-based model supported by TreeIG.
+
+    baseline : array-like of shape (n_features,)
+        Numeric baseline input used as the starting point for TreeIG paths.
+
+    loss : {"squared_error", "log_loss", "multiclass_log_loss"}, default="squared_error"
+        Loss function whose reduction is decomposed. Use ``"squared_error"``
+        for regression, ``"log_loss"`` for binary additive-score
+        classification, and ``"multiclass_log_loss"`` for multiclass
+        additive-score classification.
+
+    feature_names : sequence of str, optional
+        Default feature names used in returned EDEF results.
+
+    target : int or None, default=None
+        TreeIG target used for scalar-output attribution. For binary
+        classification, this follows TreeIG's target convention. Ignored for
+        ``loss="multiclass_log_loss"``, where all class-score targets are
+        traced.
+
+    time_tol : float, default=1e-10
+        Tolerance used by TreeIG when ordering split-crossing times.
+
+    n_classes : int or None, default=None
+        Number of classes for multiclass log-loss attribution. If omitted,
+        ``len(model.classes_)`` is used when available.
+
+    When to use
+    -----------
+    Use ``TreeExplainer`` for tree ensembles supported by TreeIG, including
+    supported scikit-learn, XGBoost, and LightGBM models. This backend uses
+    exact TreeIG path traces rather than numerical differentiation.
+
+    Notes
+    -----
+    EDEF is computed for the fixed fitted model. The explainer does not refit
+    the model, remove features, or evaluate counterfactual model
+    specifications.
+
+    For supported TreeIG models, path events are computed exactly from tree
+    split crossings. Additivity error should therefore mainly reflect
+    floating-point arithmetic and backend prediction conventions.
     """
 
     def __init__(
@@ -60,6 +111,33 @@ class TreeExplainer:
         time_tol: float = 1e-10,
         n_classes=None,
     ):
+        """
+        Initialize a tree-based EDEF explainer.
+
+        Parameters
+        ----------
+        model : object
+            Fitted tree-based model supported by TreeIG.
+
+        baseline : array-like of shape (n_features,)
+            Numeric baseline input.
+
+        loss : {"squared_error", "log_loss", "multiclass_log_loss"}, default="squared_error"
+            Loss function whose reduction is decomposed.
+
+        feature_names : sequence of str, optional
+            Default feature names for reported feature contributions.
+
+        target : int or None, default=None
+            TreeIG target for scalar-output attribution. Ignored for
+            multiclass log-loss attribution.
+
+        time_tol : float, default=1e-10
+            Tolerance used by TreeIG when ordering split-crossing times.
+
+        n_classes : int or None, default=None
+            Number of classes for multiclass log-loss attribution.
+        """
         if loss not in {"squared_error", "log_loss", "multiclass_log_loss"}:
             raise ValueError(
                 "TreeExplainer supports squared_error, log_loss, "
@@ -91,8 +169,59 @@ class TreeExplainer:
         *,
         feature_names=None,
         check_additivity: bool = True,
-        atol: float = 1e-5,  # many tree models use float32 internals
+        atol: float = 1e-5,
     ) -> EDEFExplanation:
+        """
+        Compute the tree-based EDEF decomposition for evaluation data.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_obs, n_features)
+            Evaluation feature matrix. Values must be finite and numeric.
+
+        y : array-like of shape (n_obs,)
+            Observed outcomes or class labels. For ``loss="squared_error"``,
+            values are interpreted as numeric outcomes. For ``loss="log_loss"``,
+            labels must be binary values in ``{0, 1}``. For
+            ``loss="multiclass_log_loss"``, labels must be nonnegative integer
+            class indices.
+
+        feature_names : sequence of str, optional
+            Feature names used in the returned explanation. If omitted, names
+            supplied at construction are used. If neither is supplied, names
+            are generated as ``"x0"``, ``"x1"``, and so on.
+
+        check_additivity : bool, default=True
+            Whether to verify that average feature contributions reconstruct
+            total average loss reduction up to numerical tolerance.
+
+        atol : float, default=1e-5
+            Absolute tolerance used for the additivity check. A looser default
+            is used because several tree backends use float32 internals.
+
+        Returns
+        -------
+        explanation : EDEFExplanation
+            Explanation object containing average feature contributions,
+            observation-level feature contributions, standard errors, total
+            loss reduction, baseline loss, model loss, feature names, sample
+            size, and additivity error.
+
+        Notes
+        -----
+        The returned ``values`` satisfy, up to floating-point error,
+
+            values.sum() = baseline_loss - model_loss
+
+        where losses are averaged over the evaluation sample.
+
+        Examples
+        --------
+        >>> from edef import TreeExplainer
+        >>> explainer = TreeExplainer(model, baseline=x0, loss="squared_error")
+        >>> explanation = explainer(X_test, y_test)
+        >>> explanation.values
+        """
         X = np.asarray(X, dtype=float)
         y = np.asarray(y).reshape(-1)
 
@@ -152,7 +281,7 @@ class TreeExplainer:
 
             if check_additivity and abs(additivity_error) > atol:
                 raise RuntimeError(
-                    "EDEF contributions do not add to total fit improvement. "
+                    "EDEF contributions do not add to total loss reduction. "
                     f"Additivity error: {additivity_error}"
                 )
 
@@ -235,7 +364,7 @@ class TreeExplainer:
 
         if check_additivity and abs(additivity_error) > atol:
             raise RuntimeError(
-                "EDEF contributions do not add to total fit improvement. "
+                "EDEF contributions do not add to total loss reduction. "
                 f"Additivity error: {additivity_error}"
             )
 
@@ -262,6 +391,7 @@ class TreeExplainer:
         check_additivity: bool = True,
         atol: float = 1e-8,
     ) -> EDEFExplanation:
+        """Compute multiclass log-loss EDEF using class-score TreeIG traces."""
         y = np.asarray(y).reshape(-1)
         X = np.asarray(X, dtype=float)
 
@@ -311,7 +441,7 @@ class TreeExplainer:
 
             if check_additivity and abs(additivity_error) > atol:
                 raise RuntimeError(
-                    "EDEF contributions do not add to total fit improvement. "
+                    "EDEF contributions do not add to total loss reduction. "
                     f"Additivity error: {additivity_error}"
                 )
 
@@ -408,7 +538,7 @@ class TreeExplainer:
 
         if check_additivity and abs(additivity_error) > atol:
             raise RuntimeError(
-                "EDEF contributions do not add to total fit improvement. "
+                "EDEF contributions do not add to total loss reduction. "
                 f"Additivity error: {additivity_error}"
             )
 
@@ -427,6 +557,7 @@ class TreeExplainer:
         )
 
     def _get_treeig(self, target):
+        """Return a cached TreeIG explainer for a scalar target."""
         key = None if target is None else int(target)
 
         if key not in self._treeig_by_target:
@@ -440,6 +571,7 @@ class TreeExplainer:
         return self._treeig_by_target[key]
 
     def _resolve_n_classes(self) -> int:
+        """Resolve the number of classes for multiclass attribution."""
         if self.n_classes is not None:
             return int(self.n_classes)
 
@@ -453,6 +585,7 @@ class TreeExplainer:
         )
 
     def _resolve_feature_names(self, feature_names, n_features: int) -> list[str]:
+        """Resolve or generate feature names for the explanation output."""
         names = feature_names
 
         if names is None:

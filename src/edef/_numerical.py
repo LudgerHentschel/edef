@@ -41,15 +41,62 @@ def _multiclass_log_loss(y, p):
 
 class NumericalExplainer:
     """
-    Numerical EDEF explainer using finite-difference loss gradients.
+    Numerical EDEF explainer for smooth black-box prediction models.
 
-    This explainer is intended for smooth black-box models that expose
-    sklearn-style prediction methods.
+    ``NumericalExplainer`` computes an Euler Decomposition of Explained Fit
+    (EDEF) by approximating loss gradients with central finite differences
+    along the straight-line path from a fixed baseline input to each
+    evaluation input. The resulting feature contributions decompose average
+    loss reduction from baseline predictions to endpoint model predictions.
 
-    Supported losses:
-    - squared_error: uses model.predict(X)
-    - log_loss: uses model.predict_proba(X) for binary classification
-    - multiclass_log_loss: uses model.predict_proba(X) for multiclass classification
+    This explainer is intended for smooth or approximately smooth models that
+    expose scikit-learn-style prediction methods. It is a generic fallback
+    backend when analytic gradients, linear structure, or exact TreeIG traces
+    are not available.
+
+    Parameters
+    ----------
+    model : object
+        Fitted prediction model. For ``loss="squared_error"``, the model must
+        expose ``predict(X)``. For ``loss="log_loss"`` and
+        ``loss="multiclass_log_loss"``, the model must expose
+        ``predict_proba(X)``.
+
+    baseline : array-like of shape (n_features,)
+        Numeric baseline input used as the starting point for each path.
+
+    loss : {"squared_error", "log_loss", "multiclass_log_loss"}, default="squared_error"
+        Loss function whose reduction is decomposed. ``"log_loss"`` uses the
+        positive-class probability from binary ``predict_proba(X)``.
+        ``"multiclass_log_loss"`` uses the full class-probability matrix from
+        ``predict_proba(X)``.
+
+    n_steps : int, default=32
+        Number of Gauss-Legendre quadrature nodes used to approximate the path
+        integral.
+
+    step_size : float, default=1e-4
+        Central finite-difference step size used to approximate loss
+        gradients with respect to input features.
+
+    feature_names : sequence of str, optional
+        Default feature names used in returned EDEF results.
+
+    When to use
+    -----------
+    Use ``NumericalExplainer`` as a fallback backend for smooth black-box
+    models that expose sklearn-style prediction APIs but do not provide
+    analytic gradients or exact TreeIG traces.
+
+    Notes
+    -----
+    EDEF is computed for the fixed fitted model. The explainer does not refit
+    the model, remove features, or evaluate counterfactual model
+    specifications.
+
+    This backend is approximate. Additivity error may reflect finite-
+    difference error, quadrature error, nonsmooth model behavior, probability
+    clipping in log-loss calculations, and floating-point arithmetic.
     """
 
     def __init__(
@@ -62,6 +109,29 @@ class NumericalExplainer:
         step_size: float = 1e-4,
         feature_names=None,
     ):
+        """
+        Initialize a numerical EDEF explainer.
+
+        Parameters
+        ----------
+        model : object
+            Fitted prediction model.
+
+        baseline : array-like of shape (n_features,)
+            Numeric baseline input.
+
+        loss : {"squared_error", "log_loss", "multiclass_log_loss"}, default="squared_error"
+            Loss function whose reduction is decomposed.
+
+        n_steps : int, default=32
+            Number of Gauss-Legendre quadrature nodes.
+
+        step_size : float, default=1e-4
+            Central finite-difference step size.
+
+        feature_names : sequence of str, optional
+            Default feature names for reported feature contributions.
+        """
         if loss not in {"squared_error", "log_loss", "multiclass_log_loss"}:
             raise ValueError(
                 "NumericalExplainer supports squared_error, log_loss, "
@@ -91,6 +161,59 @@ class NumericalExplainer:
         check_additivity: bool = True,
         atol: float = 1e-4,
     ) -> EDEFExplanation:
+        """
+        Compute the numerical EDEF decomposition for evaluation data.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_obs, n_features)
+            Evaluation feature matrix. Values must be finite and numeric.
+
+        y : array-like of shape (n_obs,)
+            Observed outcomes or class labels. For ``loss="squared_error"``,
+            values are interpreted as numeric outcomes. For ``loss="log_loss"``,
+            labels must be binary values in ``{0, 1}``. For
+            ``loss="multiclass_log_loss"``, labels must be nonnegative integer
+            class indices.
+
+        feature_names : sequence of str, optional
+            Feature names used in the returned explanation. If omitted, names
+            supplied at construction are used. If neither is supplied, names
+            are generated as ``"x0"``, ``"x1"``, and so on.
+
+        check_additivity : bool, default=True
+            Whether to verify that average feature contributions reconstruct
+            total average loss reduction up to numerical tolerance.
+
+        atol : float, default=1e-4
+            Absolute tolerance used for the additivity check. A looser default
+            is used because this backend uses numerical finite differences and
+            numerical quadrature.
+
+        Returns
+        -------
+        explanation : EDEFExplanation
+            Explanation object containing average feature contributions,
+            observation-level feature contributions, standard errors, total
+            loss reduction, baseline loss, model loss, feature names, sample
+            size, and additivity error.
+
+        Notes
+        -----
+        The returned ``values`` satisfy approximately,
+
+            values.sum() = baseline_loss - model_loss
+
+        where losses are averaged over the evaluation sample. The discrepancy
+        is reported as ``additivity_error``.
+
+        Examples
+        --------
+        >>> from edef import NumericalExplainer
+        >>> explainer = NumericalExplainer(model, baseline=x0, loss="squared_error")
+        >>> explanation = explainer(X_test, y_test)
+        >>> explanation.values
+        """
         X = np.asarray(X, dtype=float)
         y = np.asarray(y).reshape(-1)
 
@@ -169,7 +292,7 @@ class NumericalExplainer:
 
         if check_additivity and abs(additivity_error) > atol:
             raise RuntimeError(
-                "EDEF contributions do not add to total fit improvement. "
+                "EDEF contributions do not add to total loss reduction. "
                 f"Additivity error: {additivity_error}"
             )
 
@@ -194,6 +317,7 @@ class NumericalExplainer:
         )
 
     def _finite_difference_loss_gradient(self, X, y):
+        """Approximate per-observation loss gradients by central differences."""
         n_obs, n_features = X.shape
         h = self.step_size
 
@@ -223,6 +347,7 @@ class NumericalExplainer:
         return grad
         
     def _loss_per_observation(self, X, y):
+        """Return per-observation losses for the selected loss."""
         if self.loss == "squared_error":
             pred = self._predict_regression(X)
             return _squared_error_loss(y, pred)
@@ -238,6 +363,7 @@ class NumericalExplainer:
         raise RuntimeError(f"Unexpected loss: {self.loss}")
 
     def _predict_regression(self, X):
+        """Return validated scalar predictions from ``model.predict``."""
         if not hasattr(self.model, "predict"):
             raise TypeError("squared_error requires a model with predict(X).")
 
@@ -252,6 +378,7 @@ class NumericalExplainer:
         return pred
 
     def _predict_binary_probability(self, X):
+        """Return validated positive-class probabilities from ``predict_proba``."""
         if not hasattr(self.model, "predict_proba"):
             raise TypeError("log_loss requires a model with predict_proba(X).")
 
@@ -273,6 +400,7 @@ class NumericalExplainer:
         return proba[:, 1]
 
     def _predict_multiclass_probability(self, X):
+        """Return validated class-probability matrices from ``predict_proba``."""
         if not hasattr(self.model, "predict_proba"):
             raise TypeError("multiclass_log_loss requires a model with predict_proba(X).")
 

@@ -112,13 +112,59 @@ def linear_regression_components(
     
 class LinearExplainer:
     """
-    SHAP-style EDEF explainer for linear models.
+    EDEF explainer for fitted linear models.
 
-    Version 1 supports fitted linear regression models with a 1D ``coef_``
-    attribute. The model intercept is absorbed into the intercept-only
-    baseline used by EDEF.
+    ``LinearExplainer`` computes an Euler Decomposition of Explained Fit
+    (EDEF) for linear regression and linear classification models. The
+    explainer decomposes realized fit or loss reduction into feature-level
+    contributions for a fixed fitted model.
+
+    For squared-error regression, the method decomposes the realized explained
+    squared-error improvement relative to the intercept-only baseline. For
+    log-loss classification, it decomposes log-loss reduction using the
+    model's linear score, margin, or logit representation.
+
+    Version 1 supports fitted linear models exposing a ``coef_`` attribute.
+    Single-output regression and binary classification use a one-dimensional
+    ``coef_`` vector. Multiclass classification uses a two-dimensional
+    ``coef_`` array with shape ``(n_classes, n_features)``.
+
+    Parameters
+    ----------
+    model : object
+        Fitted linear model exposing ``coef_``. For classification, the model
+        must also provide the score information needed by the internal
+        decision-function helper.
+
+    baseline : object, optional
+        Reserved for future baseline configuration. The current implementation
+        uses the model intercept/baseline component handled by the underlying
+        linear decomposition routines.
+
+    loss : {"squared_error", "log_loss"}, default="squared_error"
+        Loss function whose improvement is decomposed. Use
+        ``"squared_error"`` for linear regression and ``"log_loss"`` for
+        binary or multiclass linear classification.
+
+    feature_names : sequence of str, optional
+        Default feature names used in returned EDEF results. If omitted,
+        feature names are inferred when possible or generated from column
+        positions.
+
+    When to use
+    -----------
+    Use ``LinearExplainer`` for fitted linear regression, logistic
+    regression, and related generalized linear models exposing ``coef_``.
+    This backend is analytic and typically faster and more stable than
+    numerical differentiation.
+    
+    Notes
+    -----
+    EDEF is a fixed-model decomposition. It does not refit the model, remove
+    features, or measure counterfactual model performance under alternative
+    specifications.
     """
-
+    
     def __init__(
         self,
         model,
@@ -127,6 +173,26 @@ class LinearExplainer:
         loss: str = "squared_error",
         feature_names=None,
     ):
+        """
+        Initialize a linear EDEF explainer.
+
+        Parameters
+        ----------
+        model : object
+            Fitted linear model exposing ``coef_``.
+
+        baseline : object, optional
+            Reserved for future baseline configuration. The current
+            implementation uses the model intercept/baseline component handled
+            by the underlying linear decomposition routines.
+
+        loss : {"squared_error", "log_loss"}, default="squared_error"
+            Loss function whose improvement is decomposed.
+
+        feature_names : sequence of str, optional
+            Default feature names for reported feature contributions.
+        """
+
         if loss not in {"squared_error", "log_loss"}:
             raise ValueError("LinearExplainer supports squared_error and log_loss.")
     
@@ -146,6 +212,54 @@ class LinearExplainer:
         check_additivity: bool = True,
         atol: float = 1e-10,
     ):
+        """
+        Compute the EDEF decomposition for evaluation data.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_obs, n_features)
+            Evaluation feature matrix.
+
+        y : array-like of shape (n_obs,)
+            Observed outcomes or class labels.
+
+        feature_names : sequence of str, optional
+            Feature names used in the returned result. If omitted, the names
+            supplied at construction are used. If neither is supplied, names
+            are inferred or generated.
+
+        check_additivity : bool, default=True
+            Whether to verify that the reported components reconstruct the
+            total explained fit or loss reduction up to numerical tolerance.  
+                 
+        atol : float, default=1e-10
+            Absolute tolerance used for the additivity check.
+
+        Returns
+        -------
+        result : object
+            EDEF result returned by the corresponding linear decomposition
+            routine. For squared-error regression, this is the output of
+            ``linear_regression_components``. For binary log-loss
+            classification, this is the output of
+            ``linear_logistic_components``. For multiclass log-loss
+            classification, this is the output of
+            ``linear_multiclass_components``.
+
+        Notes
+        -----
+        The decomposition is computed for the fitted model supplied at
+        construction. It attributes realized fit or loss reduction over the
+        supplied evaluation sample; it is not a feature-selection,
+        permutation-importance, or refitting-based measure.
+
+        Examples
+        --------
+        >>> from edef import LinearExplainer
+        >>> explainer = LinearExplainer(model, loss="squared_error")
+        >>> result = explainer(X_test, y_test)
+        """
+
         X = np.asarray(X, dtype=float)
 
         if X.ndim != 2:
