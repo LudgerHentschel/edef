@@ -60,7 +60,13 @@ Although based on integrated gradients, EDEF only requires numerical differentia
 
 ## Why EDEF?
 
-Prediction-attribution methods answer "why did the model predict this value?" EDEF answers "which features made the model accurate here?"
+The figure illustrates the distinction between prediction-attribution methods and EDEF for mean-squared-error loss. 
+
+<p align="center">
+  <img src="docs/Figure_EDEF.svg" width="700">
+</p>
+
+Prediction-attribution methods answer "why did the model predict this value?" EDEF answers "which features made the model accurate here?" 
 
 These questions have different answers. A feature can strongly influence a prediction while contributing nothing to predictive accuracy, or can actively hurt it. This happens when a feature moves predictions in the wrong direction, when a feature is overfit, or when a feature captures real signal on average but adds noise on a particular evaluation sample.
 
