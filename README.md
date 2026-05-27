@@ -68,7 +68,7 @@ The figure illustrates the distinction between prediction-attribution methods an
 
 Prediction-attribution methods answer "why did the model predict this value?" EDEF answers "which features made the model accurate here?" 
 
-These questions have different answers. A feature can strongly influence a prediction while contributing nothing to predictive accuracy, or can actively hurt it. This happens when a feature moves predictions in the wrong direction, when a feature is overfit, or when a feature captures real signal on average but adds noise on a particular evaluation sample.
+These questions have different answers. A feature can strongly influence a prediction while contributing nothing to predictive accuracy, or event actively hurting it. This happens when a feature moves predictions in the wrong direction, when a feature is overfit, or when a feature captures real signal on average but adds noise on a particular evaluation sample.
 
 Consider a model trained to predict financial returns. Feature A captures a persistent signal; feature B was correlated with returns in the training set but is uncorrelated in the evaluation period. Both features generate large prediction movements. SHAP or Integrated Gradients assigns large importances to both. EDEF assigns large importance to A and near-zero importance to B because B's prediction movements do not improve realized fit in the evaluation sample.
 
