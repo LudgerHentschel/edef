@@ -10,7 +10,7 @@ where $\mathcal{L}$ is the prediction loss, $x_0$ is a baseline input, $x$ is th
 
 Standard attribution methods explain predictions. EDEF explains whether those predictions were accurate.
 
-EDEF applies the integrated-gradients framework of Sundararajan, Taly, and Yan (2017) to the loss function rather than the prediction, and thereby inherits the main axiomatic properties of IG — completeness, implementation invariance, and the dummy axiom — while attributing realized predictive fit rather than predicted values.
+EDEF, developed in Hentschel ([2006a](https://www.ludgerhentschel.com/PDFs/Hentschel%20'26e.pdf), [2026b](https://www.ludgerhentschel.com/PDFs/Hentschel%20'26f.pdf)), applies the integrated-gradients framework of Sundararajan, Taly, and Yan (2017) to the loss function rather than the prediction, and thereby inherits the main axiomatic properties of IG — completeness, implementation invariance, and the dummy axiom — while attributing realized predictive fit rather than predicted values.
 
 ## Installation
 
@@ -481,17 +481,17 @@ EDEF covers the dominant regression and classification models in the Python ecos
 
 EDEF:
 
-- Hentschel, Ludger. 2026.
-  "Feature importance for model fit: Nonlinear regression and
-  classification in machine learning models."
+- Hentschel, Ludger. 2026a.
+  ["Feature importance for predictive accuracy: An Euler decomposition."](https://www.ludgerhentschel.com/PDFs/Hentschel%20'26e.pdf)
 
-- Hentschel, Ludger. 2026.
-  "Feature importance for predictive accuracy: An Euler decomposition."
+- Hentschel, Ludger. 2026b.
+  ["Feature importance for model fit: Nonlinear regression and
+  classification in machine learning models."](https://www.ludgerhentschel.com/PDFs/Hentschel%20'26f.pdf)
 
 TreeIG:
 
-- Hentschel, Ludger. 2026.
-  "TreeIG: Exact Integrated Gradients for Tree-Based Models."
+- Hentschel, Ludger. 2026c.
+  ["TreeIG: Exact Integrated Gradients for Tree-Based Models."](https://www.ludgerhentschel.com/PDFs/Hentschel%20'26g.pdf)
 
 Integrated Gradients:
 
