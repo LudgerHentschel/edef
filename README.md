@@ -1,5 +1,7 @@
 # EDEF
 
+[![PyPI version](https://img.shields.io/pypi/v/edef.svg)](https://pypi.org/project/edef/)
+
 EDEF (Euler Decomposition of Explained Fit) decomposes realized predictive performance into additive feature contributions.
 
 For each observation, EDEF returns feature attributions $\phi_j$ satisfying
