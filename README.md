@@ -10,7 +10,7 @@ $$\sum_j \phi_j = \mathcal{L}(y, f(x_0)) - \mathcal{L}(y, f(x)),$$
 
 where $\mathcal{L}$ is the prediction loss, $x_0$ is a baseline input, $x$ is the observation, and $f(x)$ is the prediction function evaluated at $x$. A positive contribution means the feature improved realized predictive fit relative to the baseline.
 
-Standard attribution methods explain predictions. EDEF explains whether those predictions were accurate.
+Standard attribution methods explain predictions. EDEF explains the accuracy of  those predictions.
 
 EDEF, developed in Hentschel ([2006a](https://www.ludgerhentschel.com/PDFs/Hentschel%20'26e.pdf), [2026b](https://www.ludgerhentschel.com/PDFs/Hentschel%20'26f.pdf)), applies the integrated-gradients framework of Sundararajan, Taly, and Yan (2017) to the loss function rather than the prediction, and thereby inherits the main axiomatic properties of IG — completeness, implementation invariance, and the dummy axiom — while attributing realized predictive fit rather than predicted values.
 
@@ -58,7 +58,7 @@ Feature contributions
 
 Unlike most attribution methods, EDEF reports standard errors and t-statistics alongside attribution values. Features that move predictions without improving accuracy show up near zero.
 
-Although based on integrated gradients, EDEF only requires numerical differentiation and integration for smooth nonlinear models. This tends to be fast when automatic differentiation is available. For linear models, EDEF implements very fast analytical solutions. For tree-based models, where integrated gradients may feel mismatched, EDEF exploits the insight from TreeIG that integrated gradients are a equal to the sum of discrete prediction changes along the integration path.
+Although based on integrated gradients, EDEF only requires numerical differentiation and integration for smooth nonlinear models. This tends to be fast when automatic differentiation is available. For linear models, EDEF implements very fast analytical solutions. For tree-based models, where integrated gradients may feel mismatched, EDEF exploits the insight from [TreeIG](https://github.com/LudgerHentschel/treeig) that integrated gradients are a equal to the sum of discrete prediction changes along the integration path.
 
 ## Why EDEF?
 
@@ -223,7 +223,7 @@ Three practical consequences follow. First, EDEF requires only a baseline vector
 - Binary classification (log loss)
 - Multiclass classification (softmax log loss)
 
-### Tree models (via TreeIG)
+### Tree models (via [TreeIG](https://github.com/LudgerHentschel/treeig))
 
 - `sklearn.tree.DecisionTreeRegressor`
 - `sklearn.ensemble.RandomForestRegressor`
@@ -490,7 +490,7 @@ EDEF:
   ["Feature importance for model fit: Nonlinear regression and
   classification in machine learning models."](https://www.ludgerhentschel.com/PDFs/Hentschel%20'26f.pdf)
 
-TreeIG:
+[TreeIG](https://github.com/LudgerHentschel/treeig):
 
 - Hentschel, Ludger. 2026c.
   ["TreeIG: Exact Integrated Gradients for Tree-Based Models."](https://www.ludgerhentschel.com/PDFs/Hentschel%20'26g.pdf)
