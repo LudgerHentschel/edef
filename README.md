@@ -216,6 +216,7 @@ Three practical consequences follow. First, EDEF requires only a baseline vector
 | `FlaxExplainer` | Flax Linen models | Autodiff + Gauss-Legendre quadrature |
 | `NNXExplainer` | Flax NNX models | Autodiff + Gauss-Legendre quadrature |
 | `EquinoxExplainer` | Equinox models | Autodiff + Gauss-Legendre quadrature |
+| `HaikuExplainer` | Haiku models | Autodiff + Gauss-Legendre quadrature |
 | `TreeExplainer` | Tree ensembles | Exact TreeIG path traces |
 | `NumericalExplainer` | Any sklearn-style model | Finite-difference + Gauss-Legendre quadrature |
 
@@ -250,6 +251,10 @@ Flax NNX
 Equinox
 
 - Equinox models
+
+Haiku
+
+- hk.transform models
 
 
 ### Tree models (via [TreeIG](https://github.com/LudgerHentschel/treeig))
@@ -449,6 +454,27 @@ explainer = edef.NNXExplainer(
 
 result = explainer(X_eval, y_eval)
 ```
+
+### Haiku models
+
+```python
+import edef
+import haiku as hk
+
+# transformed = hk.transform(model_fn)
+# params = transformed.init(rng, X_train[:1])
+
+explainer = edef.HaikuExplainer(
+    transformed,
+    params,
+    baseline=X_train.mean(axis=0),
+    loss="squared_error",
+)
+
+result = explainer(X_eval, y_eval)
+```
+
+JAX is supporting Haiku for compatibility but has stopped developing Haiku. 
 
 ### Equinox models
 
