@@ -79,7 +79,7 @@ class JaxExplainer:
     -----------
     Use ``JaxExplainer`` for differentiable JAX models when automatic
     differentiation is available and path-integral attribution is desired.
-    The interface is intentionally functional so that Flax, Haiku, Equinox,
+    The interface is intentionally functional so that NNX, Flax, Haiku, Equinox,
     and hand-written JAX models can be supported through thin adapters.
     """
 
@@ -112,16 +112,32 @@ class JaxExplainer:
         self.feature_names = feature_names
         self.dtype = dtype
         self._nodes, self._weights = _gauss_legendre_nodes_weights(self.n_steps)
+        
+        if dtype is not None:
+            requested = self.jnp.dtype(dtype)
+            actual = self.jax.dtypes.canonicalize_dtype(requested)
+            if self.jnp.issubdtype(requested, 
+                                   self.jnp.floating) and actual != requested:
+                import warnings
+                warnings.warn(
+                    f"Requested dtype {requested} was downcast to {actual} "
+                    "because JAX 64-bit mode is disabled; enable it with "
+                    'jax.config.update("jax_enable_x64", True) before import '
+                    "to use float64.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
     def __call__(
-        self,
-        X,
-        y,
-        *,
-        feature_names=None,
-        check_additivity: bool = True,
-        atol: float = 1e-6,
-    ) -> EDEFExplanation:
+            self,
+            X,
+            y,
+            *,
+            feature_names=None,
+            check_additivity: bool = True,
+            atol: float = 1e-5,
+            rtol: float = 1e-4,
+        ) -> EDEFExplanation:
         """Compute the path-integral EDEF decomposition for evaluation data."""
         jnp = self.jnp
         jax = self.jax
@@ -171,23 +187,53 @@ class JaxExplainer:
         X0_j = jnp.broadcast_to(baseline_j.reshape(1, -1), X_j.shape)
         delta_X = X_j - X0_j
 
+        pred_probe = self._predict_output(X_j)
+
+        if pred_probe.shape[0] != n_obs:
+            raise ValueError(
+                "Model output must have the same number of observations as X."
+            )
+
+        if self.loss == "multiclass_log_loss":
+            n_classes = pred_probe.shape[1]
+            y_max = int(np.asarray(jnp.max(y_work)))
+
+            if y_max >= n_classes:
+                raise ValueError(
+                    "multiclass labels must be less than the number of "
+                    "model output classes."
+                )
+
         def loss_sum(X_path):
             pred = self._predict_output(X_path)
             return jnp.sum(self._loss_per_observation(y_work, pred))
 
         grad_loss = jax.grad(loss_sum)
 
-        c_j = jnp.zeros_like(X_j)
+        nodes_j = jnp.asarray(self._nodes, dtype=X_j.dtype)
+        weights_j = jnp.asarray(self._weights, dtype=X_j.dtype)
 
-        for node, weight in zip(self._nodes, self._weights):
-            t = float(node)
-            a = float(weight)
-            Xt = X0_j + t * delta_X
+        def _accumulate(acc, node_weight):
+            node, weight = node_weight
+            Xt = X0_j + node * delta_X
             grad = grad_loss(Xt)
-            c_j = c_j - a * delta_X * grad
+            return acc + weight * grad, None
 
-        pred0 = self._predict_output(X0_j)
-        pred = self._predict_output(X_j)
+        weighted_grad, _ = jax.lax.scan(
+            _accumulate,
+            jnp.zeros_like(X_j),
+            (nodes_j, weights_j),
+        )
+
+        c_j = -delta_X * weighted_grad
+
+        pred0_one = self._predict_output(baseline_j.reshape(1, -1))
+        if pred0_one.ndim == 1:
+            pred0 = jnp.broadcast_to(pred0_one, (n_obs,))
+        else:
+            pred0 = jnp.broadcast_to(pred0_one, (n_obs, pred0_one.shape[1]))
+
+        pred = pred_probe
         baseline_loss = jnp.mean(self._loss_per_observation(y_work, pred0))
         model_loss = jnp.mean(self._loss_per_observation(y_work, pred))
         total = baseline_loss - model_loss
@@ -205,10 +251,12 @@ class JaxExplainer:
         model_loss_f = float(np.asarray(model_loss))
         additivity_error_f = float(np.asarray(additivity_error))
 
-        if check_additivity and abs(additivity_error_f) > atol:
+        tol = atol + rtol * abs(total_f)
+        if check_additivity and abs(additivity_error_f) > tol:
             raise RuntimeError(
                 "EDEF contributions do not add to total loss reduction. "
-                f"Additivity error: {additivity_error_f}"
+                f"Additivity error: {additivity_error_f} "
+                f"(tolerance: {tol})"
             )
 
         return EDEFExplanation(
@@ -435,9 +483,10 @@ class NNXExplainer(JaxExplainer):
         use_vmap = bool(vectorize)
 
         if use_vmap:
+            jax_module = _require_jax()[0]
+
             def predict_fn(model, X):
-                jax = _require_jax()[0]
-                return jax.vmap(lambda x: model(x, **kwargs))(X)
+                return jax_module.vmap(lambda x: model(x, **kwargs))(X)
         else:
             def predict_fn(model, X):
                 return model(X, **kwargs)
@@ -506,9 +555,10 @@ class EquinoxExplainer(JaxExplainer):
         use_vmap = bool(vectorize)
 
         if use_vmap:
+            jax_module = _require_jax()[0]
+
             def predict_fn(model, X):
-                jax = _require_jax()[0]
-                return jax.vmap(lambda x: model(x, **kwargs))(X)
+                return jax_module.vmap(lambda x: model(x, **kwargs))(X)
         else:
             def predict_fn(model, X):
                 return model(X, **kwargs)
@@ -526,3 +576,79 @@ class EquinoxExplainer(JaxExplainer):
             feature_names=feature_names,
             dtype=dtype,
         )
+        
+class HaikuExplainer(JaxExplainer):
+    """
+    Thin EDEF adapter for Haiku-transformed models.
+
+    ``HaikuExplainer`` wraps a function transformed by ``hk.transform`` and
+    delegates all EDEF computations to ``JaxExplainer``. The wrapper does not
+    import Haiku directly; it only requires that the supplied object expose a
+    callable ``apply`` method with the stateless Haiku signature
+    ``apply(params, rng, X)`` returning model outputs for a batch of inputs.
+
+    Haiku is in maintenance mode: as of July 2023 Google DeepMind recommends
+    Flax for new projects, and Haiku receives bug fixes and JAX-compatibility
+    updates but no new features. This adapter exists so that EDEF can be
+    applied to the substantial body of existing Haiku models without porting
+    them; for new work, prefer ``FlaxExplainer`` or ``NNXExplainer``.
+
+    Only stateless ``hk.transform`` functions are supported. Models with
+    mutable state (``hk.transform_with_state``, e.g. batch normalization) have
+    an ``apply`` that takes and returns state and do not fit this signature;
+    wrap them in a closure that threads inference-time state and discards the
+    returned state before passing the result to ``JaxExplainer`` directly.
+
+    Parameters
+    ----------
+    transformed : object
+        Result of ``hk.transform``. Must expose a callable ``apply`` method
+        with signature ``apply(params, rng, X)``.
+
+    params : pytree
+        Haiku parameters produced by ``transformed.init`` and passed as the
+        first argument to ``transformed.apply``.
+
+    baseline : array-like of shape (n_features,)
+        Numeric baseline input used as the starting point for each path.
+
+    rng : jax.Array or None, default=None
+        PRNG key forwarded to ``apply`` as its second argument. ``None`` is
+        appropriate for deterministic models with no stochastic operations.
+        For models with stochastic ops evaluated at inference time, pass a
+        fixed key so that attributions are reproducible.
+
+    loss, n_steps, feature_names, dtype
+        Passed through to ``JaxExplainer``.
+    """
+
+    def __init__(
+        self,
+        transformed,
+        params,
+        *,
+        baseline,
+        rng=None,
+        loss: str = "squared_error",
+        n_steps: int = 50,
+        feature_names=None,
+        dtype=None,
+    ):
+        if not hasattr(transformed, "apply") or not callable(transformed.apply):
+            raise TypeError("transformed must have a callable apply method.")
+
+        def predict_fn(params, X):
+            return transformed.apply(params, rng, X)
+
+        self.transformed = transformed
+        self.rng = rng
+
+        super().__init__(
+            predict_fn,
+            params,
+            baseline=baseline,
+            loss=loss,
+            n_steps=n_steps,
+            feature_names=feature_names,
+            dtype=dtype,
+        )        

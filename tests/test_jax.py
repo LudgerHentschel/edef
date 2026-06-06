@@ -7,7 +7,7 @@ from edef import linear_regression_components
 
 
 jax_available = importlib.util.find_spec("jax") is not None
-
+torch_available = importlib.util.find_spec("torch") is not None
 
 pytestmark = pytest.mark.skipif(
     not jax_available,
@@ -466,3 +466,192 @@ def test_equinox_explainer_rejects_noncallable_model():
 
     with pytest.raises(TypeError, match="model must be callable"):
         EquinoxExplainer(object(), baseline=np.zeros(2, dtype=np.float32))
+
+def test_jax_multiclass_rejects_label_exceeding_output_width():
+    def predict_fn(X):
+        return jnp.zeros((X.shape[0], 3), dtype=jnp.float32)
+
+    X = np.zeros((4, 2), dtype=np.float32)
+    y = np.array([0, 1, 2, 3], dtype=np.float32)
+
+    explainer = JaxExplainer(
+        predict_fn,
+        baseline=np.zeros(2, dtype=np.float32),
+        loss="multiclass_log_loss",
+    )
+
+    with pytest.raises(ValueError, match="less than the number of model output classes"):
+        explainer(X, y)
+        
+
+@pytest.mark.skipif(not torch_available, reason="torch is not installed")
+def test_jax_and_torch_explainers_agree_on_nonlinear_regression():
+    """JAX and PyTorch EDEF backends decompose the same model identically.
+
+    One tanh-MLP is built with shared weights in both frameworks; the two
+    path-integral implementations should converge to the same values,
+    observation-level contributions, and total loss reduction. The tolerance
+    accommodates float32 and any difference in quadrature rule between the two
+    backends — at large n_steps both are effectively at the exact integral.
+    """
+    import torch
+    import torch.nn as nn
+
+    from edef import TorchExplainer
+
+    rng = np.random.default_rng(0)
+    W1 = (rng.normal(size=(2, 4)) * 0.7).astype(np.float32)
+    b1 = (rng.normal(size=(4,)) * 0.3).astype(np.float32)
+    W2 = (rng.normal(size=(4, 1)) * 0.7).astype(np.float32)
+    b2 = np.float32(0.1)
+
+    X = (rng.normal(size=(64, 2)) * 0.8).astype(np.float32)
+    y = (rng.normal(size=64) * 0.5).astype(np.float32)
+    baseline = X.mean(axis=0)
+
+    # JAX model
+    params = {
+        "W1": jnp.asarray(W1),
+        "b1": jnp.asarray(b1),
+        "W2": jnp.asarray(W2),
+        "b2": jnp.asarray(b2),
+    }
+
+    def predict_fn(params, X):
+        h = jnp.tanh(X @ params["W1"] + params["b1"])
+        return (h @ params["W2"])[:, 0] + params["b2"]
+
+    jax_result = JaxExplainer(
+        predict_fn,
+        params,
+        baseline=baseline,
+        loss="squared_error",
+        n_steps=128,
+        feature_names=["x1", "x2"],
+    )(X, y)
+
+    # PyTorch model with identical weights
+    class TorchMLP(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.l1 = nn.Linear(2, 4)
+            self.l2 = nn.Linear(4, 1)
+            with torch.no_grad():
+                self.l1.weight.copy_(torch.tensor(np.ascontiguousarray(W1.T)))
+                self.l1.bias.copy_(torch.tensor(b1))
+                self.l2.weight.copy_(torch.tensor(np.ascontiguousarray(W2.T)))
+                self.l2.bias.copy_(torch.tensor(np.array([b2], dtype=np.float32)))
+
+        def forward(self, X):
+            return self.l2(torch.tanh(self.l1(X))).squeeze(-1)
+
+    torch_model = TorchMLP().eval()
+
+    torch_result = TorchExplainer(
+        torch_model,
+        baseline=baseline,
+        loss="squared_error",
+        n_steps=128,
+        feature_names=["x1", "x2"],
+    )(X, y)
+
+    np.testing.assert_allclose(jax_result.total, torch_result.total, atol=1e-3)
+    np.testing.assert_allclose(jax_result.values, torch_result.values, atol=1e-3)
+    np.testing.assert_allclose(
+        jax_result.observation_values,
+        torch_result.observation_values,
+        atol=1e-3,
+    )
+    np.testing.assert_allclose(
+        jax_result.standard_errors,
+        torch_result.standard_errors,
+        atol=1e-3,
+    )        
+    
+@pytest.mark.skipif(not torch_available, reason="torch is not installed")
+def test_jax_and_torch_explainers_agree_on_log_loss():
+    """JAX and PyTorch backends agree on binary log-loss decomposition.
+
+    Same shared-weight tanh-MLP as the regression case, but the output is a
+    scalar logit and labels are Bernoulli-sampled from the model so the total
+    loss reduction is meaningfully nonzero. Exercises the log-loss gradient
+    path, which is distinct code from squared error in both backends.
+    """
+    import torch
+    import torch.nn as nn
+
+    from edef import TorchExplainer
+
+    rng = np.random.default_rng(1)
+    W1 = (rng.normal(size=(2, 4)) * 0.7).astype(np.float32)
+    b1 = (rng.normal(size=(4,)) * 0.3).astype(np.float32)
+    W2 = (rng.normal(size=(4, 1)) * 0.7).astype(np.float32)
+    b2 = np.float32(0.1)
+
+    X = (rng.normal(size=(64, 2)) * 0.8).astype(np.float32)
+    baseline = X.mean(axis=0)
+
+    # Sample labels from the model's own logits so the model is a real fit.
+    h_np = np.tanh(X @ W1 + b1)
+    logits_np = (h_np @ W2)[:, 0] + b2
+    probs_np = 1.0 / (1.0 + np.exp(-logits_np))
+    y = (rng.uniform(size=X.shape[0]) < probs_np).astype(np.float32)
+
+    # JAX model
+    params = {
+        "W1": jnp.asarray(W1),
+        "b1": jnp.asarray(b1),
+        "W2": jnp.asarray(W2),
+        "b2": jnp.asarray(b2),
+    }
+
+    def predict_fn(params, X):
+        h = jnp.tanh(X @ params["W1"] + params["b1"])
+        return (h @ params["W2"])[:, 0] + params["b2"]
+
+    jax_result = JaxExplainer(
+        predict_fn,
+        params,
+        baseline=baseline,
+        loss="log_loss",
+        n_steps=128,
+        feature_names=["x1", "x2"],
+    )(X, y)
+
+    # PyTorch model with identical weights
+    class TorchMLP(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.l1 = nn.Linear(2, 4)
+            self.l2 = nn.Linear(4, 1)
+            with torch.no_grad():
+                self.l1.weight.copy_(torch.tensor(np.ascontiguousarray(W1.T)))
+                self.l1.bias.copy_(torch.tensor(b1))
+                self.l2.weight.copy_(torch.tensor(np.ascontiguousarray(W2.T)))
+                self.l2.bias.copy_(torch.tensor(np.array([b2], dtype=np.float32)))
+
+        def forward(self, X):
+            return self.l2(torch.tanh(self.l1(X))).squeeze(-1)
+
+    torch_model = TorchMLP().eval()
+
+    torch_result = TorchExplainer(
+        torch_model,
+        baseline=baseline,
+        loss="log_loss",
+        n_steps=128,
+        feature_names=["x1", "x2"],
+    )(X, y)
+
+    np.testing.assert_allclose(jax_result.total, torch_result.total, atol=1e-3)
+    np.testing.assert_allclose(jax_result.values, torch_result.values, atol=1e-3)
+    np.testing.assert_allclose(
+        jax_result.observation_values,
+        torch_result.observation_values,
+        atol=1e-3,
+    )
+    np.testing.assert_allclose(
+        jax_result.standard_errors,
+        torch_result.standard_errors,
+        atol=1e-3,
+    )    
