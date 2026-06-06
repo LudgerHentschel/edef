@@ -66,6 +66,11 @@ equinox = [
     "jax",
     "equinox",
 ]
+haiku = [
+    "jax",
+    "jaxlib",
+    "dm-haiku",
+]
 tree = [
     "treeig",
 ]

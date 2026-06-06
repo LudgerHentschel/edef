@@ -29,6 +29,7 @@ pip install torch                 # TorchExplainer
 pip install jax jaxlib            # JaxExplainer
 pip install flax                  # FlaxExplainer / NNXExplainer
 pip install equinox               # EquinoxExplainer
+pip install dm-haiku              # HaikuExplainer
 pip install treeig                # TreeExplainer
 pip install shap                  # SHAP plotting compatibility
 ```
