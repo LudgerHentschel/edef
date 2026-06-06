@@ -25,9 +25,12 @@ pip install edef
 Optional dependencies:
 
 ```bash
-pip install torch    # for TorchExplainer
-pip install treeig   # for TreeExplainer
-pip install shap     # for SHAP plotting compatibility
+pip install torch                 # TorchExplainer
+pip install jax jaxlib            # JaxExplainer
+pip install flax                  # FlaxExplainer / NNXExplainer
+pip install equinox               # EquinoxExplainer
+pip install treeig                # TreeExplainer
+pip install shap                  # SHAP plotting compatibility
 ```
 
 ## Using EDEF
@@ -58,7 +61,10 @@ Feature contributions
 
 Unlike most attribution methods, EDEF reports standard errors and t-statistics alongside attribution values. Features that move predictions without improving accuracy show up near zero.
 
-Although based on integrated gradients, EDEF only requires numerical differentiation and integration for smooth nonlinear models. This tends to be fast when automatic differentiation is available. For linear models, EDEF implements very fast analytical solutions. For tree-based models, where integrated gradients may feel mismatched, EDEF exploits the insight from [TreeIG](https://github.com/LudgerHentschel/treeig) that integrated gradients are a equal to the sum of discrete prediction changes along the integration path.
+Although based on integrated gradients, EDEF only requires numerical
+integration for smooth nonlinear models. When automatic differentiation
+is available in PyTorch and JAX models use exact automatic gradients,
+while black-box models fall back to finite-difference approximations. For linear models, EDEF implements very fast analytical solutions. For tree-based models, where integrated gradients may feel mismatched, EDEF exploits the insight from [TreeIG](https://github.com/LudgerHentschel/treeig) that integrated gradients are a equal to the sum of discrete prediction changes along the integration path.
 
 ## Why EDEF?
 
@@ -103,9 +109,9 @@ This integral is computed differently for each model class:
   loss changes by a computable amount. EDEF assigns that loss change to the
   crossing feature. The result is exact — no quadrature, no approximation.
 
-- **PyTorch models.** Automatic differentiation computes
-  $\partial \mathcal{L}/\partial x_j$ at each interpolation point;
-  Gauss-Legendre quadrature integrates over $t$.
+- **Autodiff models.** `PyTorch` and `JAX` models use automatic
+  differentiation to compute $\partial \mathcal{L}/\partial x_j$ at each
+  interpolation point; Gauss-Legendre quadrature integrates over $t$.
 
 - **Black-box sklearn models.** Finite-difference approximations to the loss
   gradient replace automatic differentiation; Gauss-Legendre quadrature
@@ -127,7 +133,7 @@ At $p=1{,}000$, EDEF requires 200 times fewer passes than permutation and over a
 
 Forward-pass counts may understate the practical wall-clock advantage because EDEF's passes can be fully vectorized over observations while permutation and SAGE run sequentially across features and coalition samples. See the timing notebook and the accompanying paper for wall-clock comparisons.
 
-For linear models, EDEF is closed form and requires no model evaluations at all. For tree models and PyTorch models, wall-clock times are similar: the dominant cost for tree models is the TreeIG path traversal rather than model forward passes, and both complete attribution for thousands of observations on a typical model in well under a second.
+For linear models, EDEF is closed form and requires no model evaluations at all. For tree models and autodiff models (PyTorch and JAX), wall-clock times are similar: the dominant cost for tree models is the TreeIG path traversal rather than model forward passes, and both complete attribution for thousands of observations on a typical model in well under a second.
 
 ## Statistical inference
 
@@ -206,6 +212,10 @@ Three practical consequences follow. First, EDEF requires only a baseline vector
 |:---|:---|:---|
 | `LinearExplainer` | Linear and generalized linear models | Closed-form exact decomposition |
 | `TorchExplainer` | PyTorch neural networks | Autograd + Gauss-Legendre quadrature |
+| `JaxExplainer` | Generic JAX models | Autodiff + Gauss-Legendre quadrature |
+| `FlaxExplainer` | Flax Linen models | Autodiff + Gauss-Legendre quadrature |
+| `NNXExplainer` | Flax NNX models | Autodiff + Gauss-Legendre quadrature |
+| `EquinoxExplainer` | Equinox models | Autodiff + Gauss-Legendre quadrature |
 | `TreeExplainer` | Tree ensembles | Exact TreeIG path traces |
 | `NumericalExplainer` | Any sklearn-style model | Finite-difference + Gauss-Legendre quadrature |
 
@@ -217,11 +227,30 @@ Three practical consequences follow. First, EDEF requires only a baseline vector
 - Binary logistic regression
 - Multiclass logistic regression
 
-### PyTorch models
+### Autodiff models
+
+PyTorch
 
 - Regression (squared-error loss)
 - Binary classification (log loss)
 - Multiclass classification (softmax log loss)
+
+JAX
+
+- Generic differentiable prediction functions
+
+Flax Linen
+
+- Linen modules
+
+Flax NNX
+
+- NNX modules
+
+Equinox
+
+- Equinox models
+
 
 ### Tree models (via [TreeIG](https://github.com/LudgerHentschel/treeig))
 
@@ -376,6 +405,65 @@ explainer = edef.TorchExplainer(
 result = explainer(X_eval, y_eval)
 ```
 
+### JAX models
+
+```python
+import edef
+
+explainer = edef.JaxExplainer(
+    predict_fn,
+    params,
+    baseline=X_train.mean(axis=0),
+    loss="squared_error",
+    n_steps=50,
+)
+
+result = explainer(X_eval, y_eval)
+```
+
+### Flax Linen models
+
+```python
+import edef
+
+explainer = edef.FlaxExplainer(
+    model,
+    variables,
+    baseline=X_train.mean(axis=0),
+    loss="squared_error",
+)
+
+result = explainer(X_eval, y_eval)
+```
+
+### Flax NNX models
+
+```python
+import edef
+
+explainer = edef.NNXExplainer(
+    model,
+    baseline=X_train.mean(axis=0),
+    loss="squared_error",
+)
+
+result = explainer(X_eval, y_eval)
+```
+
+### Equinox models
+
+```python
+import edef
+
+explainer = edef.EquinoxExplainer(
+    model,
+    baseline=X_train.mean(axis=0),
+    loss="squared_error",
+)
+
+result = explainer(X_eval, y_eval)
+```
+
 ### Black-box sklearn models
 
 ```python
@@ -472,7 +560,8 @@ The underlying values are EDEF realized-fit contributions. The SHAP plotting int
 EDEF covers the dominant regression and classification models in the Python ecosystem with exact or high-accuracy decompositions:
 
 - closed-form exact attribution for linear models;
-- autograd path integration for PyTorch models;
+- autograd path integration for PyTorch and JAX models;
+- Flax Linen, Flax NNX, and Equinox support through JAX adapters;
 - exact attribution for tree ensembles via TreeIG;
 - numerical attribution for any sklearn-interface model;
 - multiclass log-loss decomposition throughout;
