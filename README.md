@@ -455,6 +455,20 @@ explainer = edef.NNXExplainer(
 result = explainer(X_eval, y_eval)
 ```
 
+### Equinox models
+
+```python
+import edef
+
+explainer = edef.EquinoxExplainer(
+    model,
+    baseline=X_train.mean(axis=0),
+    loss="squared_error",
+)
+
+result = explainer(X_eval, y_eval)
+```
+
 ### Haiku models
 
 ```python
@@ -475,20 +489,6 @@ result = explainer(X_eval, y_eval)
 ```
 
 JAX is supporting Haiku for compatibility but has stopped developing Haiku. 
-
-### Equinox models
-
-```python
-import edef
-
-explainer = edef.EquinoxExplainer(
-    model,
-    baseline=X_train.mean(axis=0),
-    loss="squared_error",
-)
-
-result = explainer(X_eval, y_eval)
-```
 
 ### Black-box sklearn models
 
